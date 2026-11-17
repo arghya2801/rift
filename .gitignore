@@ -2,7 +2,6 @@ node_modules/
 dist/
 .vite/
 /build/bin/
-/wailsjs/runtime/
 /package.json.md5
 *.log
 .DS_Store
