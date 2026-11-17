@@ -1,0 +1,153 @@
+/* IntelliJ New UI Dark values; applyPalette overwrites the palette vars when a theme is picked. */
+:root {
+  --bg: #1e1f22;
+  --fg: #dfe1e5;
+  --bg-chrome: #2b2d30;
+  --bg-surface: #393b40;
+  --bg-hover: #35373b;
+  --border: #1e1f22;
+  --fg-bright: #ffffff;
+  --fg-dim: #8c8f94;
+  --fg-faint: #6f737a;
+  --accent: #3574f0;
+  --accent-strong: #3574f0;
+  --on-accent: #ffffff;
+  --danger: #f75464;
+  --danger-strong: #db3b4b;
+  --warn: #e6a23c;
+  --ok: #5fb865;
+  --info: #a571e6;
+  --selection: #2e436e;
+
+  /* Layout tokens, not theme-specific. */
+  --bg-editor: var(--bg);
+  --bg-panel: var(--bg-chrome);
+  --line: color-mix(in srgb, var(--fg) 10%, transparent);
+  --focus: var(--accent);
+  --row-h: 24px;
+  --radius: 4px;
+  --radius-lg: 8px;
+  --font-ui: Inter, 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --fs: 13px;
+  --fs-small: 12px;
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 0 0 1px var(--line);
+
+  --vcs-added: #73bd79;
+  --vcs-modified: #70aeff;
+  --vcs-deleted: #8c8f94;
+  --vcs-renamed: #a571e6;
+  --vcs-untracked: #d17b5e;
+  --vcs-conflict: #f75464;
+
+  font-family: var(--font-ui);
+  font-size: var(--fs);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  color: var(--fg);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  height: 26px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, white);
+}
+
+button.outline {
+  border-color: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  outline: none;
+  user-select: text;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner,
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.dim {
+  color: var(--fg-dim);
+}
+
+/* VCS file status colors, by git status letter. */
+.vcs-M { color: var(--vcs-modified); }
+.vcs-A { color: var(--vcs-added); }
+.vcs-D { color: var(--vcs-deleted); }
+.vcs-R, .vcs-C { color: var(--vcs-renamed); }
+.vcs-q { color: var(--vcs-untracked); }
+.vcs-U { color: var(--vcs-conflict); }

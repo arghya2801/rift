@@ -1,0 +1,38 @@
+{
+  "name": "rift",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Rift - lightweight git client",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run && go test ./...",
+    "test:ts": "vitest run",
+    "desktop:dev": "wails dev -s -devserver localhost:34125",
+    "desktop:build": "vite build && wails build -s -m -nosyncgomod",
+    "play": "node scripts/play.mjs",
+    "test:e2e": "node e2e/run.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@testing-library/svelte": "^5.4.2",
+    "@tsconfig/svelte": "^5.0.4",
+    "jsdom": "^29.1.1",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/merge": "^6.12.3",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15"
+  }
+}

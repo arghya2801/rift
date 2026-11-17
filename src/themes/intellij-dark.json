@@ -1,0 +1,23 @@
+{
+  "name": "IntelliJ Dark",
+  "background": "#1e1f22",
+  "foreground": "#dfe1e5",
+  "cursorColor": "#ced0d6",
+  "selectionBackground": "#2e436e",
+  "black": "#2b2d30",
+  "red": "#db3b4b",
+  "green": "#5fb865",
+  "yellow": "#e6a23c",
+  "blue": "#3574f0",
+  "purple": "#a571e6",
+  "cyan": "#2aacb8",
+  "white": "#bcbec4",
+  "brightBlack": "#6f737a",
+  "brightRed": "#f75464",
+  "brightGreen": "#73bd79",
+  "brightYellow": "#f2c55c",
+  "brightBlue": "#548af7",
+  "brightPurple": "#c77dbb",
+  "brightCyan": "#56c1d6",
+  "brightWhite": "#ffffff"
+}

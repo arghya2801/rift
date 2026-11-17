@@ -1,0 +1,104 @@
+# Builds the Windows artefacts for a version tag and attaches them to a draft release.
+#
+# Push a tag (`git tag v0.1.0 && git push origin v0.1.0`), then edit and publish the draft
+# this leaves behind. The binaries are unsigned, so SmartScreen warns on first run.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # Lets the build be exercised without publishing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # To read whether CI passed on the tagged commit.
+  actions: read
+
+env:
+  WAILS_VERSION: v2.16.0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The installer name comes from package.json and EXE metadata from wails.json; a tag
+      # that disagrees with either would ship mislabelled artefacts.
+      - name: Check versions match the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          exe=$(node -p "require('./wails.json').info.productVersion")
+          [ "$tag" = "$pkg" ] && [ "$tag" = "$exe" ] || { echo "tag $tag, package.json $pkg, wails.json $exe"; exit 1; }
+
+      - run: npm ci
+
+      - name: Cache the Wails CLI
+        id: wails
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin/wails.exe
+          key: wails-${{ env.WAILS_VERSION }}-${{ runner.os }}
+      - if: steps.wails.outputs.cache-hit != 'true'
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      - run: npm run desktop:build
+
+      - run: choco install nsis -y --no-progress
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $bin = Join-Path $PWD 'build\bin'
+          & 'C:\Program Files (x86)\NSIS\makensis.exe' "/DVERSION=$v" "/DBINARY=$bin\rift.exe" "/DICON=$PWD\build\windows\icon.ico" "/DOUTPUT=$bin\Rift_${v}_x64-setup.exe" packaging\rift.nsi
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # rift.exe is the portable build alongside the installer.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rift-windows
+          path: |
+            build/bin/rift.exe
+            build/bin/*-setup.exe
+          if-no-files-found: error
+
+      # Tests run in CI, not again here. A tag is pushed right after its commit, while CI on
+      # that commit is often still running, so this waits for it; a failed CI drafts nothing.
+      - name: Check CI passed on this commit
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 90); do
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push" --jq '.workflow_runs[0] | "\(.status) \(.conclusion)"')
+            case "$run" in
+              "completed success") exit 0 ;;
+              completed*) echo "CI on $GITHUB_SHA ended: $run"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "CI on $GITHUB_SHA did not finish in 30 minutes (last: ${run:-no run})"; exit 1
+
+      - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          files: |
+            build/bin/rift.exe
+            build/bin/*-setup.exe
