@@ -43,7 +43,8 @@ jobs:
       - run: go vet ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }} ./...
       - run: go test ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }} ./...
       - run: wails build -s -m -nosyncgomod ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }}
-      - run: wails generate module && git diff --exit-code wailsjs/go
+      # Wails writes the bindings executable on Linux and macOS; only content drift matters.
+      - run: wails generate module && git -c core.fileMode=false diff --exit-code wailsjs/go
 
       - uses: actions/upload-artifact@v4
         with:

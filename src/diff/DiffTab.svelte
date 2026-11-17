@@ -260,7 +260,11 @@
     untrack(reload);
   });
 
-  $effect(() => destroy);
+  // Bumping seq makes a load still in flight stop instead of building into a closed tab.
+  $effect(() => () => {
+    seq++;
+    destroy();
+  });
 </script>
 
 <div class="diff">
