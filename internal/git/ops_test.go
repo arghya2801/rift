@@ -13,7 +13,7 @@ func withRemote(t *testing.T) (dir, bare string) {
 	t.Helper()
 	dir = newRepo(t)
 	bare = filepath.Join(filepath.Dir(dir), "origin.git")
-	must(t, dir, "init", "-q", "--bare", bare)
+	must(t, dir, "init", "-q", "--bare", "-b", "main", bare)
 	must(t, dir, "remote", "add", "origin", bare)
 	must(t, dir, "push", "-q", "-u", "origin", "main")
 	return dir, bare

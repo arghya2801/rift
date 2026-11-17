@@ -142,7 +142,11 @@ func TestSnapshot(t *testing.T) {
 func TestInsideGuard(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	for _, rel := range []string{"..", "../x", "a/../../x", `..\x`, "a/../../../etc"} {
+	escapes := []string{"..", "../x", "a/../../x", "a/../../../etc"}
+	if filepath.Separator == '\\' {
+		escapes = append(escapes, `..\x`)
+	}
+	for _, rel := range escapes {
 		if _, err := inside(dir, rel); err == nil {
 			t.Errorf("%q escaped", rel)
 		}
