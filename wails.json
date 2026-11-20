@@ -10,7 +10,7 @@
   "info": {
     "companyName": "rift",
     "productName": "Rift",
-    "productVersion": "0.1.0",
+    "productVersion": "0.2.0",
     "copyright": "Rift contributors",
     "comments": "Lightweight git client"
   }
