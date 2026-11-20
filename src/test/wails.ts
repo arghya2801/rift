@@ -15,9 +15,10 @@ export const Go = {
   Commit: vi.fn(async () => {}),
   CommitFiles: vi.fn(async () => [{ status: 'M', path: 'src/changed.ts' }]),
   CommitMessage: vi.fn(async () => 'Merge feat\n\nbody'),
-  CommitPartial: vi.fn(async () => {}),
+  CommitPartial: vi.fn(async () => null),
+  RepairPartialIndex: vi.fn(async () => {}),
   CommitSides: vi.fn(async () => ({ old: 'a\n', new: 'b\n', binary: false })),
-  ConflictSides: vi.fn(async () => ({ base: 'x\n', ours: 'o\n', theirs: 't\n', merged: '<<<<<<< ours\no\n||||||| base\nx\n=======\nt\n>>>>>>> theirs\n' })),
+  ConflictSides: vi.fn(async () => ({ stages: 'original stages', markerSize: 7, base: 'x\n', ours: 'o\n', theirs: 't\n', merged: '<<<<<<< ours\no\n||||||| base\nx\n=======\nt\n>>>>>>> theirs\n' })),
   CreateBranch: vi.fn(async () => {}),
   CreateTag: vi.fn(async () => {}),
   DeleteBranch: vi.fn(async () => {}),
@@ -66,6 +67,7 @@ export const Go = {
   Status: vi.fn(async () => fx.snapshot().status),
   Unstage: vi.fn(async () => {}),
   Watch: vi.fn(async () => {}),
+  SaveFile: vi.fn(async (_dir: string, _path: string, _text: string, _expected: string) => {}),
   WriteFile: vi.fn(async () => {}),
 };
 

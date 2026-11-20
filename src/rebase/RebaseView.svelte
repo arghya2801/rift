@@ -46,7 +46,7 @@
   }
 
   const invalid = $derived(
-    items.length === 0 ? 'Nothing to rebase' : ['squash', 'fixup'].includes(items[0].action) ? 'The first commit cannot be squash or fixup' : '',
+    items.length === 0 ? 'Nothing to rebase' : ['squash', 'fixup'].includes(items.find((item) => item.action !== 'drop')?.action ?? '') ? 'The first commit cannot be squash or fixup' : '',
   );
 
   async function start() {

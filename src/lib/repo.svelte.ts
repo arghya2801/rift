@@ -73,8 +73,12 @@ export class Repo {
           ref.full !== previous.refs[i].full || ref.hash !== previous.refs[i].hash));
         if (moved || refsChanged) this.gitRev++;
       }
-      this.snap = s;
       this.error = s.error ?? '';
+      if (this.error) this.#wantFull = true;
+      else this.snap = s;
+    } catch (e) {
+      this.error = String(e);
+      this.#wantFull = true;
     } finally {
       this.#inflight = false;
       if (this.#again) {

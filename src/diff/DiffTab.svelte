@@ -1,3 +1,7 @@
+<script lang="ts" module>
+  const indexWrites = new Map<string, Promise<void>>();
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte';
   import { MergeView, getChunks, goToNextChunk, goToPreviousChunk, unifiedMergeView, updateOriginalDoc, getOriginalDoc, originalDocChangeEffect } from '@codemirror/merge';
@@ -27,7 +31,8 @@
   const r = $derived(repo(dir));
   const src = $derived(tab.source);
   // The side a hunk action writes into: a = index / partial, b = index when unstaging.
-  const writable = $derived(src === 'unstaged' || src === 'head' ? 'a' : src === 'staged' ? 'b' : null);
+  let readOnly = $state(false);
+  const writable = $derived(readOnly ? null : src === 'unstaged' || src === 'head' ? 'a' : src === 'staged' ? 'b' : null);
   const labels = $derived(
     src === 'unstaged' ? ['Index', 'Working tree']
     : src === 'staged' ? ['HEAD', 'Staged']
@@ -49,17 +54,38 @@
   let uv: EditorView | undefined;
   const docs = { a: '', b: '' };
   let syncing = false;
+  let baseText = '';
+  let eol = '\n';
+  const normalized = (text: string) => text.replace(/\r\n?/g, '\n');
   let seq = 0;
 
   const main = () => mv?.b ?? uv;
 
-  function persist(text: string) {
+  function persist(document: string) {
+    seq++;
+    const text = eol === '\n' ? document : document.replaceAll('\n', eol);
     if (src === 'head') {
       if (!partials[dir]) partials[dir] = {};
-      partials[dir][tab.path] = text;
+      partials[dir][tab.path] = { text, base: baseText };
       return;
     }
-    r.run(Go.StageContent(dir, tab.path, text), false).catch((e) => toast(String(e)));
+    const path = tab.path;
+    const worktree = dir;
+    const key = JSON.stringify([worktree, path]);
+    const current = r;
+    const entry = current.files.find((f) => f.path === path);
+    const removeAddition = src === 'staged' && entry?.index === 65 && !document;
+    const stageDeletion = src === 'unstaged' && entry?.work === 68 && !document;
+    const write = async () => {
+      if (removeAddition) await Go.Unstage(worktree, [path]);
+      else if (stageDeletion) await Go.Stage(worktree, [path]);
+      else await Go.StageContent(worktree, path, text);
+    };
+    const pending = (indexWrites.get(key) ?? Promise.resolve()).then(write).catch((e) => toast(String(e)));
+    indexWrites.set(key, pending);
+    pending.finally(() => {
+      if (indexWrites.get(key) === pending) { indexWrites.delete(key); current.schedule(false, true, [path]); }
+    });
   }
 
   function recount() {
@@ -133,7 +159,7 @@
   }
 
   function build() {
-    if (!base || binary) return;
+    if (!base || binary || error) return;
     destroy();
     const ro = EditorState.readOnly.of(true);
     const nav = Prec.highest(
@@ -206,8 +232,8 @@
   }
 
   async function sides(): Promise<git.Sides> {
-    if (src === 'unstaged') return Go.FileSides(dir, tab.path, false);
-    if (src === 'staged') return Go.FileSides(dir, tab.path, true);
+    if (src === 'unstaged') return Go.FileSides(dir, tab.path, false, '');
+    if (src === 'staged') return Go.FileSides(dir, tab.path, true, tab.oldPath ?? '');
     if (src === 'head') return Go.HeadSides(dir, tab.path);
     return Go.CommitSides(dir, tab.hash ?? '', tab.path, tab.oldPath ?? '');
   }
@@ -215,11 +241,24 @@
   async function reload() {
     const n = ++seq;
     try {
+      await indexWrites.get(JSON.stringify([dir, tab.path]));
+      if (n !== seq) return;
       const [s, ext] = await Promise.all([sides(), base ? Promise.resolve(base) : cmBase(tab.path)]);
       if (n !== seq) return;
       base = ext;
       error = '';
-      const a = src === 'head' ? (partials[dir]?.[tab.path] ?? s.old) : s.old;
+      if (!!s.readOnly !== readOnly) { readOnly = !!s.readOnly; destroy(); }
+      baseText = s.old;
+      const partial = src === 'head' ? partials[dir]?.[tab.path] : undefined;
+      if (partial && partial.base !== baseText) {
+        delete partials[dir][tab.path];
+        toast('The base file changed. Select partial changes again.');
+      }
+      const old = partial && partial.base === baseText ? partial.text : s.old;
+      const target = (src === 'staged' ? s.new : old) || (src === 'staged' ? old : s.new);
+      eol = target.includes('\r\n') ? '\r\n' : '\n';
+      const a = normalized(old);
+      const b = normalized(s.new);
       if (s.binary !== binary) {
         binary = s.binary;
         if (binary) destroy();
@@ -227,18 +266,21 @@
       if (binary) return;
       if (!mv && !uv) {
         docs.a = a;
-        docs.b = s.new;
+        docs.b = b;
         build();
       } else {
         syncing = true;
         try {
           setA(a);
-          setB(s.new);
+          setB(b);
         } finally {
           syncing = false;
         }
       }
     } catch (e) {
+      if (n !== seq) return;
+      destroy();
+      count = 0;
       error = String(e);
       toast(error);
     } finally {
@@ -291,7 +333,7 @@
     {#if src !== 'commit'}
       <button class="outline" onclick={openFile} title="Edit this file at the cursor line (F4)">Open file</button>
     {/if}
-    {#if writable && !binary}
+    {#if writable && !binary && !error}
       <button class="outline" onclick={stageLines} title="Select lines on the right side, then Ctrl+Enter">{verb} selected lines</button>
     {/if}
   </div>

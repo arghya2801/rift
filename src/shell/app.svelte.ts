@@ -44,6 +44,10 @@ export async function refreshRepos() {
     }
   }
   app.repos = next;
+  if (app.current) {
+    const fresh = next.flatMap((r) => r.worktrees ?? []).find((w) => w.path === app.current?.path);
+    if (fresh && (fresh.branch !== app.current.branch || fresh.detached !== app.current.detached)) app.current = fresh;
+  }
 }
 
 export async function attempt<T>(p: Promise<T>): Promise<T | undefined> {
@@ -55,6 +59,7 @@ export async function attempt<T>(p: Promise<T>): Promise<T | undefined> {
 }
 
 export function select(w: git.Worktree | null) {
+  if (w?.bare) return;
   if (w) app.ui[w.path] ??= { left: 'commit', bottom: false };
   app.current = w;
   if (w) activate(w.path);
@@ -82,7 +87,7 @@ export async function newWorktree(r: main.Repo) {
   }
 }
 
-export const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+export const norm = (p: string) => /^(?:[a-z]:[\\/]|\\\\)/i.test(p) ? p.replace(/\\/g, '/').toLowerCase() : p;
 
 export const repoMenu = (r: main.Repo): MenuItem[] => [
   { label: 'New worktree…', run: () => newWorktree(r) },
@@ -93,7 +98,7 @@ export const repoMenu = (r: main.Repo): MenuItem[] => [
 ];
 
 export const worktreeMenu = (r: main.Repo, w: git.Worktree): MenuItem[] => [
-  { label: 'Open', run: () => select(w) },
+  ...(w.bare ? [] : [{ label: 'Open', run: () => select(w) }]),
   { label: 'Open in ATC', run: () => attempt(Go.OpenInATC(w.path)) },
   { label: 'Open in external editor', run: () => attempt(Go.OpenExternal(w.path, '.', 0)) },
   { label: 'Copy path', run: () => navigator.clipboard.writeText(w.path) },
@@ -110,7 +115,8 @@ export const worktreeMenu = (r: main.Repo, w: git.Worktree): MenuItem[] => [
               await Go.RemoveWorktree(r.path, w.path, false);
             } catch (e) {
               if (!(await sure('Force remove worktree?', `${e}\n\nUncommitted changes there are lost.`, 'Force remove'))) return;
-              try { await Go.RemoveWorktree(r.path, w.path, true); } catch (err) { toast(String(err)); return; }
+              try { await Go.RemoveWorktree(r.path, w.path, true); }
+              catch (err) { toast(String(err)); return; }
             }
             if (app.current?.path === w.path) select(null);
             await refreshRepos();

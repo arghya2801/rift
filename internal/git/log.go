@@ -42,13 +42,18 @@ func Log(dir string, limit int, extra ...string) ([]Row, error) {
 func logCommits(dir string, limit, skip int, extra ...string) ([]Commit, error) {
 	args := append([]string{"log", "--topo-order", "-z", "-n", strconv.Itoa(limit),
 		"--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s"}, extra...)
-	if len(extra) == 0 {
-		args = append(args, "--branches", "--remotes", "--tags", "HEAD")
-	}
 	if skip > 0 {
 		args = append(args, "--skip="+strconv.Itoa(skip))
 	}
+	if len(extra) == 0 {
+		args = append(args, "--branches", "--remotes", "--tags", "HEAD")
+	}
 	out, err := Run(dir, args...)
+	if err != nil && len(extra) == 0 {
+		if _, headErr := Run(dir, "rev-parse", "--verify", "--quiet", "HEAD"); headErr != nil {
+			out, err = Run(dir, args[:len(args)-1]...)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -203,12 +208,11 @@ func CommitFiles(dir, hash string) ([]ChangedFile, error) {
 	return files, nil
 }
 
-func CommitSides(dir, hash, path, oldPath string) Sides {
+func CommitSides(dir, hash, path, oldPath string) (Sides, error) {
 	if oldPath == "" {
 		oldPath = path
 	}
-	b := blobs(dir, hash+"^:"+oldPath, hash+":"+path)
-	return sides(b[0], b[1])
+	return blobSides(dir, hash+"^:"+oldPath, hash+":"+path)
 }
 
 func CommitMessage(dir, hash string) string {

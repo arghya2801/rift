@@ -47,7 +47,7 @@
           <button class="ib" title="New worktree" onclick={() => newWorktree(r)}><Icon name="plus" size={14} /></button>
         </div>
         {#each r.worktrees ?? [] as w (w.path)}
-          <button class="wt" onclick={() => select(w)} oncontextmenu={(e) => openMenu(e, worktreeMenu(r, w))} title={w.path}>
+          <button class="wt" disabled={w.bare} onclick={() => select(w)} oncontextmenu={(e) => openMenu(e, worktreeMenu(r, w))} title={w.path}>
             <Icon name="branch" size={14} />
             <span class="grow">{label(w)}</span>
             {#if !w.main}<span class="dim small">{leaf(w.path)}</span>{/if}

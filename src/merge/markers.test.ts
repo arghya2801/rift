@@ -24,3 +24,19 @@ test('incremental marker detection matches rescanning split and joined lines', (
     expect(markerCount(doc) + markerDelta(doc, after, change)).toBe(markerCount(after));
   }
 });
+
+test('preserves incomplete and illustrative marker lines', () => {
+  for (const text of ['<<<<<<< example\n', '<<<<<<< ours\npartial\n']) {
+    expect(render(parse(text))).toBe(text);
+  }
+  expect(hasMarkers('<<<<<<< example\n')).toBe(false);
+});
+
+test('distinguishes generated blocks from literal marker examples', () => {
+  const literal = '<<<<<<< ours\nexample\n=======\n>>>>>>> theirs\n';
+  const block = { type: 'conflict', ours: 'ours\n', base: 'base\n', theirs: 'theirs\n' } as const;
+  expect(hasMarkers(literal, 8)).toBe(false);
+  const source = literal + render([block], 8);
+  expect(parse(source, 8)).toEqual([{ type: 'text', text: literal }, block]);
+  expect(hasMarkers(source, 8)).toBe(true);
+});

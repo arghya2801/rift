@@ -53,7 +53,7 @@ func TestLogReal(t *testing.T) {
 	if err != nil || len(files) != 1 || files[0].Status != "R" || files[0].OldPath != "a.txt" || files[0].Path != "renamed.txt" {
 		t.Fatalf("%+v %v", files, err)
 	}
-	if s := CommitSides(dir, head, "renamed.txt", "a.txt"); s.Old != "one\n" || s.New != "one\n" {
+	if s, err := CommitSides(dir, head, "renamed.txt", "a.txt"); err != nil || s.Old != "one\n" || s.New != "one\n" {
 		t.Fatalf("%+v", s)
 	}
 	if files, _ := CommitFiles(dir, rows[1].Hash); len(files) != 1 || files[0].Status != "A" {
@@ -85,5 +85,19 @@ func TestHistoryPagesPreserveRowsAndRejectMovedAnchor(t *testing.T) {
 	changed, err := LogPage(dir, 3, 3, first.Rows[2].Hash, first.Lanes)
 	if err != nil || !changed.Restart {
 		t.Fatal(changed, err)
+	}
+}
+
+func TestEmptyAndSingleCommitLog(t *testing.T) {
+	dir := t.TempDir()
+	must(t, dir, "init", "-q", "-b", "main")
+	rows, err := Log(dir, 20)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("unborn log: %v %v", rows, err)
+	}
+	must(t, dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "first", "--allow-empty")
+	rows, err = Log(dir, 20)
+	if err != nil || len(rows) != 1 || rows[0].Lines == nil {
+		t.Fatalf("root row: %v %v", rows, err)
 	}
 }

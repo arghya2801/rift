@@ -17,6 +17,9 @@ export namespace git {
 	    }
 	}
 	export class Conflict {
+	    markerSize: number;
+	    stages: string;
+	    wholeOnly?: string;
 	    base: string;
 	    ours: string;
 	    theirs: string;
@@ -28,6 +31,9 @@ export namespace git {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.markerSize = source["markerSize"];
+	        this.stages = source["stages"];
+	        this.wholeOnly = source["wholeOnly"];
 	        this.base = source["base"];
 	        this.ours = source["ours"];
 	        this.theirs = source["theirs"];
@@ -52,6 +58,24 @@ export namespace git {
 	        this.index = source["index"];
 	        this.work = source["work"];
 	        this.conflict = source["conflict"];
+	    }
+	}
+	export class IndexRepair {
+	    head: string;
+	    paths: string[];
+	    index: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexRepair(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.head = source["head"];
+	        this.paths = source["paths"];
+	        this.index = source["index"];
+	        this.message = source["message"];
 	    }
 	}
 	export class Line {
@@ -167,6 +191,7 @@ export namespace git {
 		}
 	}
 	export class PartialFile {
+	    expectedBase?: string;
 	    path: string;
 	    text?: string;
 	    delete: boolean;
@@ -177,6 +202,7 @@ export namespace git {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.expectedBase = source["expectedBase"];
 	        this.path = source["path"];
 	        this.text = source["text"];
 	        this.delete = source["delete"];
@@ -208,6 +234,7 @@ export namespace git {
 	}
 	
 	export class Sides {
+	    readOnly?: boolean;
 	    old: string;
 	    new: string;
 	    binary: boolean;
@@ -218,6 +245,7 @@ export namespace git {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.readOnly = source["readOnly"];
 	        this.old = source["old"];
 	        this.new = source["new"];
 	        this.binary = source["binary"];

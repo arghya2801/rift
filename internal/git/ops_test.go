@@ -224,7 +224,7 @@ func TestConflictResolveContinue(t *testing.T) {
 			t.Fatalf("merged lacks %q:\n%s", m, c.Merged)
 		}
 	}
-	if err := ResolveFile(dir, "a.txt", "resolved\n"); err != nil {
+	if err := ResolveFile(dir, "a.txt", "resolved\n", c.Stages); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := GetStatus(dir); len(OpFromStatus(dir, s).Conflicts) != 0 {
@@ -247,7 +247,11 @@ func TestConflictAcceptAndAbort(t *testing.T) {
 		t.Run(side, func(t *testing.T) {
 			t.Parallel()
 			dir := conflicted(t)
-			if err := AcceptSide(dir, "a.txt", side); err != nil {
+			stages, err := conflictStages(dir, "a.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := AcceptSide(dir, "a.txt", side, stages); err != nil {
 				t.Fatal(err)
 			}
 			if got := read(t, dir, "a.txt"); got != side+"\n" {
@@ -389,13 +393,13 @@ func TestFileSides(t *testing.T) {
 		{"new.txt", false, "", "n\n"},
 	}
 	for _, c := range cases {
-		s, err := FileSides(dir, c.path, c.staged)
+		s, err := FileSides(dir, c.path, c.staged, "")
 		if err != nil || s.Old != c.old || s.New != c.cur || s.Binary {
 			t.Fatalf("%+v: got %+v %v", c, s, err)
 		}
 	}
 	os.Remove(filepath.Join(dir, "a.txt"))
-	if s, _ := FileSides(dir, "a.txt", false); s.Old != "two\n" || s.New != "" {
+	if s, _ := FileSides(dir, "a.txt", false, ""); s.Old != "two\n" || s.New != "" {
 		t.Fatalf("deleted %+v", s)
 	}
 }
@@ -405,15 +409,18 @@ func TestBlobsMissingAndLarge(t *testing.T) {
 	dir := newRepo(t)
 	big := strings.Repeat("x", MaxBlob+1)
 	commit(t, dir, "big.txt", big, "big")
-	got := blobs(dir, "HEAD:nope", "HEAD:big.txt", "HEAD:a.txt")
+	got, err := blobs(dir, "HEAD:nope", "HEAD:big.txt", "HEAD:a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got[0] != "" || got[1] != "\x00" || got[2] != "one\n" {
 		t.Fatalf("lens %d %d %q", len(got[0]), len(got[1]), got[2])
 	}
-	if s, _ := FileSides(dir, "big.txt", false); !s.Binary || s.Old != "" || s.New != "" {
+	if s, _ := FileSides(dir, "big.txt", false, ""); !s.Binary || s.Old != "" || s.New != "" {
 		t.Fatal("oversized file should be binary")
 	}
 	commit(t, dir, "bin.dat", "a\x00b", "bin")
-	if s := CommitSides(dir, strings.TrimSpace(must(t, dir, "rev-parse", "HEAD")), "bin.dat", ""); !s.Binary {
+	if s, err := CommitSides(dir, strings.TrimSpace(must(t, dir, "rev-parse", "HEAD")), "bin.dat", ""); err != nil || !s.Binary {
 		t.Fatal("NUL content should be binary")
 	}
 }
@@ -422,7 +429,7 @@ func TestCommitSidesRoot(t *testing.T) {
 	t.Parallel()
 	dir := newRepo(t)
 	root := strings.TrimSpace(must(t, dir, "rev-parse", "HEAD"))
-	if s := CommitSides(dir, root, "a.txt", ""); s.Old != "" || s.New != "one\n" {
+	if s, err := CommitSides(dir, root, "a.txt", ""); err != nil || s.Old != "" || s.New != "one\n" {
 		t.Fatalf("%+v", s)
 	}
 }
@@ -613,5 +620,204 @@ func TestBatchWholeFileCommit(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("500 whole files required %d update-index calls, want 1", calls)
+	}
+}
+
+func TestConflictTextSafety(t *testing.T) {
+	dir := conflicted(t)
+	head := must(t, dir, "rev-parse", "HEAD")
+	if err := CommitPartial(dir, "unsafe", false, []PartialFile{{Path: "a.txt"}}); err == nil {
+		t.Fatal("committed unresolved index")
+	}
+	if got := must(t, dir, "rev-parse", "HEAD"); got != head {
+		t.Fatal("changed HEAD")
+	}
+	for _, body := range []string{"a\x00b", "invalid\xff", strings.Repeat("a", MaxBlob+1)} {
+		write(t, dir, "binary", body)
+		hash := strings.TrimSpace(must(t, dir, "hash-object", "-w", "binary"))
+		cmd := command(dir, nil, "update-index", "--index-info")
+		cmd.Stdin = strings.NewReader("100644 " + hash + " 2\ta.txt\n")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v", out, err)
+		}
+		if c, err := ConflictSides(dir, "a.txt"); err != nil || c.WholeOnly == "" || c.Merged != "" {
+			t.Fatal("offered text merge for unsupported content")
+		}
+	}
+}
+
+func TestFilterFailureDoesNotBecomeEmptyContent(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "a.txt filter=broken\n")
+	must(t, dir, "config", "filter.broken.required", "true")
+	must(t, dir, "config", "filter.broken.smudge", "false")
+	if _, err := FileSides(dir, "a.txt", true, ""); err == nil {
+		t.Fatal("filter failure swallowed")
+	}
+}
+
+func TestStaleResolutionLeavesNewContent(t *testing.T) {
+	dir := conflicted(t)
+	c, err := ConflictSides(dir, "a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "a.txt", "resolved elsewhere")
+	must(t, dir, "add", "a.txt")
+	if err := ResolveFile(dir, "a.txt", "old draft", c.Stages); err == nil {
+		t.Fatal("stale apply succeeded")
+	}
+	if err := AcceptSide(dir, "a.txt", "ours", c.Stages); err == nil {
+		t.Fatal("stale checkout succeeded")
+	}
+	if got := read(t, dir, "a.txt"); got != "resolved elsewhere" {
+		t.Fatal(got)
+	}
+}
+
+func TestAcceptDeletedSide(t *testing.T) {
+	dir := newRepo(t)
+	must(t, dir, "switch", "-c", "delete")
+	must(t, dir, "rm", "a.txt")
+	must(t, dir, "commit", "-qm", "delete")
+	must(t, dir, "switch", "main")
+	commit(t, dir, "a.txt", "changed", "edit")
+	if _, err := Run(dir, "merge", "delete"); err == nil {
+		t.Fatal("expected conflict")
+	}
+	c, err := ConflictSides(dir, "a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AcceptSide(dir, "a.txt", "theirs", c.Stages); err != nil {
+		t.Fatal(err)
+	}
+	if got := must(t, dir, "ls-files", "--", "a.txt"); got != "" {
+		t.Fatal(got)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "a.txt")); !os.IsNotExist(err) {
+		t.Fatal("file remains")
+	}
+}
+
+func TestLocalHEADSuffixIsVisible(t *testing.T) {
+	dir := newRepo(t)
+	must(t, dir, "branch", "topic/HEAD")
+	refs, err := Refs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(refs, func(r Ref) bool { return r.Name == "topic/HEAD" }) {
+		t.Fatal(refs)
+	}
+}
+
+func TestChangelistKeepsDanglingLink(t *testing.T) {
+	dir := newRepo(t)
+	if err := os.Symlink("missing", filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	must(t, dir, "config", "core.symlinks", "true")
+	if err := CommitPartial(dir, "link", false, []PartialFile{{Path: "link"}}); err != nil {
+		t.Fatal(err)
+	}
+	if out := must(t, dir, "ls-tree", "HEAD", "--", "link"); !strings.HasPrefix(out, "120000 ") {
+		t.Fatal(out)
+	}
+}
+
+func TestPartialRejectsChangedBase(t *testing.T) {
+	dir := newRepo(t)
+	old, selection := "old", "partial"
+	before := must(t, dir, "rev-parse", "HEAD")
+	err := CommitPartial(dir, "stale", false, []PartialFile{{Path: "a.txt", Text: &selection, ExpectedBase: &old}})
+	if err == nil || must(t, dir, "rev-parse", "HEAD") != before {
+		t.Fatal("stale partial was committed")
+	}
+}
+
+func TestPartialPreservesIndexOnlyContent(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.txt", "staged")
+	must(t, dir, "add", "a.txt")
+	write(t, dir, "a.txt", "working")
+	head := must(t, dir, "rev-parse", "HEAD")
+	if err := CommitPartial(dir, "partial", false, []PartialFile{{Path: "a.txt"}}); err == nil {
+		t.Fatal("discarded staged content")
+	}
+	if must(t, dir, "rev-parse", "HEAD") != head || must(t, dir, "show", ":a.txt") != "staged" {
+		t.Fatal("changed HEAD or index")
+	}
+}
+
+func TestRepairIndexAfterSuccessfulPartialCommit(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.txt", "new")
+	lock := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := CommitPartial(dir, "partial", false, []PartialFile{{Path: "a.txt"}})
+	repair, ok := err.(*IndexRepair)
+	if !ok {
+		t.Fatalf("expected repair receipt, got %v", err)
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	head := must(t, dir, "rev-parse", "HEAD")
+	if err := RepairPartialIndex(dir, *repair); err != nil {
+		t.Fatal(err)
+	}
+	if must(t, dir, "rev-parse", "HEAD") != head || must(t, dir, "show", ":a.txt") != "new" {
+		t.Fatal("failed to repair just the index")
+	}
+}
+
+func TestDirtySubmoduleDiffIsReadOnly(t *testing.T) {
+	parent, child := newRepo(t), newRepo(t)
+	must(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", child, "module")
+	must(t, parent, "commit", "-qm", "add submodule")
+	write(t, filepath.Join(parent, "module"), "a.txt", "dirty")
+	s, err := FileSides(parent, "module", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.ReadOnly || s.Old == s.New || !strings.Contains(s.New, "-dirty") {
+		t.Fatalf("%+v", s)
+	}
+}
+func TestReftableStashList(t *testing.T) {
+	dir := newRepo(t)
+	if _, err := Run(dir, "refs", "migrate", "--ref-format=reftable"); err != nil {
+		t.Skipf("reftable migration unavailable: %v", err)
+	}
+	write(t, dir, "a.txt", "stash")
+	if err := StashPush(dir, "reftable", false); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Stashes(dir)
+	if err != nil || len(st) != 1 || !strings.Contains(st[0].Subject, "reftable") {
+		t.Fatalf("%v %v", st, err)
+	}
+}
+func TestRejectUnsupportedActions(t *testing.T) {
+	dir := newRepo(t)
+	h := strings.TrimSpace(must(t, dir, "rev-parse", "HEAD"))
+	for _, e := range []error{
+		RunRebase(dir, "", []TodoItem{{Action: "unsupported", Hash: h}}),
+		RunRebase(dir, "", []TodoItem{{Action: "drop", Hash: h}, {Action: "fixup", Hash: h}}),
+		RunRebase(dir, "", []TodoItem{{Action: "pick", Hash: h, Subject: "one\ntwo"}}),
+		Reset(dir, "invalid", h), StashAction(dir, "invalid", "stash@{0}"),
+	} {
+		if e == nil {
+			t.Fatal("unsupported operation accepted")
+		}
+	}
+}
+
+func TestMergeMarkerWidthAvoidsSourceText(t *testing.T) {
+	if got := markerSize([]string{"=======\n", "<<<<<<<< ours\n", "plain"}); got != 9 {
+		t.Fatal(got)
 	}
 }

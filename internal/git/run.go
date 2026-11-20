@@ -61,30 +61,32 @@ func runInput(dir string, env []string, input string, args ...string) (string, e
 
 var gitDirs, commonDirs sync.Map
 
-// commonDir is the shared git dir (refs, logs, objects) for all worktrees of a repo, cached.
-func commonDir(dir string) (string, error) {
-	if g, ok := commonDirs.Load(dir); ok {
-		return g.(string), nil
+type gitLocation struct{ marker, path string }
+
+func cachedDir(dir, option string, cache *sync.Map) (string, error) {
+	marker := ""
+	entry := filepath.Join(dir, ".git")
+	if st, err := os.Lstat(entry); err == nil && st.Mode().IsRegular() {
+		b, err := os.ReadFile(entry)
+		if err != nil {
+			return "", err
+		}
+		marker = string(b)
 	}
-	out, err := Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if saved, ok := cache.Load(dir); ok {
+		loc := saved.(gitLocation)
+		if loc.marker == marker {
+			return loc.path, nil
+		}
+	}
+	out, err := Run(dir, "rev-parse", "--path-format=absolute", option)
 	if err != nil {
 		return "", err
 	}
-	g := filepath.Clean(strings.TrimSpace(out))
-	commonDirs.Store(dir, g)
-	return g, nil
+	path := filepath.Clean(strings.TrimSpace(out))
+	cache.Store(dir, gitLocation{marker, path})
+	return path, nil
 }
 
-// gitDir is the worktree's own git dir, cached: it never changes for a given worktree path.
-func gitDir(dir string) (string, error) {
-	if g, ok := gitDirs.Load(dir); ok {
-		return g.(string), nil
-	}
-	out, err := Run(dir, "rev-parse", "--path-format=absolute", "--git-dir")
-	if err != nil {
-		return "", err
-	}
-	g := filepath.Clean(strings.TrimSpace(out))
-	gitDirs.Store(dir, g)
-	return g, nil
-}
+func commonDir(dir string) (string, error) { return cachedDir(dir, "--git-common-dir", &commonDirs) }
+func gitDir(dir string) (string, error)    { return cachedDir(dir, "--git-dir", &gitDirs) }

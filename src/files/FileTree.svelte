@@ -3,7 +3,7 @@
   import * as Go from '../../wailsjs/go/main/App';
   import type { main } from '../../wailsjs/go/models';
   import { repo } from '../lib/repo.svelte';
-  import { openTab, fileTab, diffTab } from '../lib/tabs.svelte';
+  import { openTab, fileTab, diffTab, mergeTab } from '../lib/tabs.svelte';
   import { openMenu, toast } from '../lib/menu.svelte';
   import PagedRows from '../lib/PagedRows.svelte';
   import Icon from '../lib/Icon.svelte';
@@ -51,9 +51,13 @@
 
   function menu(e: MouseEvent, rel: string, isDir: boolean) {
     selected = rel;
+    const change = !isDir && repo(dir).files.find((f) => f.path === rel);
     openMenu(e, [
       ...(isDir ? [] : [{ label: 'Open', run: () => openTab(dir, fileTab(rel)) }]),
-      ...(!isDir && status.has(rel) ? [{ label: 'Show Diff', run: () => openTab(dir, diffTab(rel, 'unstaged')) }] : []),
+      ...(change ? [{
+        label: change.conflict ? 'Resolve Conflict' : 'Show Diff',
+        run: () => openTab(dir, change.conflict ? mergeTab(rel) : diffTab(rel, String.fromCharCode(change.work) === '.' ? 'staged' : 'unstaged', change.origPath)),
+      }] : []),
       { label: 'Open in External Editor', run: () => Go.OpenExternal(dir, rel, 1).catch((x) => toast(String(x))) },
       null,
       { label: 'Copy Path', run: () => navigator.clipboard.writeText(`${dir}/${rel}`) },
@@ -97,7 +101,10 @@
   $effect(() => {
     if (!reloadKey) return;
     untrack(() => {
-      for (const rel of Object.keys(children)) if (rel === '' || open[rel]) load(rel);
+      for (const rel of Object.keys(children)) {
+        if (rel === '' || open[rel]) load(rel);
+        else delete children[rel];
+      }
     });
   });
 </script>

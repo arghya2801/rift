@@ -195,7 +195,7 @@
         </select>
       </label>
       <span class="grow"></span>
-      <span class="dim small">{shown.length} commits</span>
+      <span class="dim small">{shown.length} commits{plain && more ? ' in loaded history' : ''}</span>
       <button class="icon" title="Refresh" onclick={() => load()} disabled={loading}><Icon name="refresh" /></button>
     </div>
     <div class="thead">

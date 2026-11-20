@@ -11,6 +11,10 @@ function lineCursor(text: string, count: number) {
   };
 }
 
+function appendRange(result: string[], lines: string[], from: number, to = lines.length) {
+  for (let i = from; i < to; i++) result.push(lines[i]);
+}
+
 function join(lines: string[], eol: string) {
   return lines.map((l, i) => (i < lines.length - 1 && !l.endsWith('\n') ? l + eol : l)).join('');
 }
@@ -41,12 +45,12 @@ export function applyLines(a: string, b: string, chunks: readonly ChunkLike[], s
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    for (let i = pos; i < p.a0; i++) res.push(la[i]);
-    if (!p.drop) for (let i = p.a0; i < p.a1; i++) res.push(la[i]);
+    appendRange(res, la, pos, p.a0);
+    if (!p.drop) appendRange(res, la, p.a0, p.a1);
     for (let i = p.b0; i < p.b1; i++) if (p.picked(i)) res.push(lb[i]);
     pos = p.a1;
   }
-  for (let i = pos; i < la.length; i++) res.push(la[i]);
+  appendRange(res, la, pos);
   return join(res, eolOf(a + b));
 }
 
@@ -56,11 +60,11 @@ export function revertLines(a: string, b: string, chunks: readonly ChunkLike[], 
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    for (let i = pos; i < p.b0; i++) res.push(lb[i]);
-    if (p.drop) for (let i = p.a0; i < p.a1; i++) res.push(la[i]);
+    appendRange(res, lb, pos, p.b0);
+    if (p.drop) appendRange(res, la, p.a0, p.a1);
     for (let i = p.b0; i < p.b1; i++) if (!p.picked(i)) res.push(lb[i]);
     pos = p.b1;
   }
-  for (let i = pos; i < lb.length; i++) res.push(lb[i]);
+  appendRange(res, lb, pos);
   return join(res, eolOf(a + b));
 }

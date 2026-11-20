@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,7 +51,10 @@ func Stashes(dir string) ([]Stash, error) {
 	}
 	b, err := os.ReadFile(filepath.Join(g, "logs", "refs", "stash"))
 	if os.IsNotExist(err) {
-		return []Stash{}, nil
+		if _, statErr := os.Stat(filepath.Join(g, "reftable")); os.IsNotExist(statErr) {
+			return []Stash{}, nil
+		}
+		return stashList(dir)
 	}
 	if err != nil {
 		return stashList(dir)
@@ -103,6 +107,9 @@ func StashPush(dir, message string, untracked bool) error {
 
 // StashAction runs apply, pop or drop on ref.
 func StashAction(dir, action, ref string) error {
+	if action != "apply" && action != "pop" && action != "drop" {
+		return errors.New("invalid stash action")
+	}
 	_, err := Run(dir, "stash", action, ref)
 	return err
 }

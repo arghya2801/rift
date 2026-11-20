@@ -176,9 +176,18 @@ func (wt *Watcher) loop() {
 				return
 			}
 			wt.mu.Lock()
-			ignored := wt.skip[filepath.Clean(ev.Name)]
+			name := filepath.Clean(ev.Name)
+			gen := wt.gen
+			inGit := false
+			for _, g := range wt.gitDirs {
+				if name == g || strings.HasPrefix(name, g+string(filepath.Separator)) {
+					inGit = true
+					break
+				}
+			}
+			ignored := wt.skip[name] || wt.path == "" || (!inGit && name != wt.path && !strings.HasPrefix(name, wt.path+string(filepath.Separator)))
 			wt.mu.Unlock()
-			if ignored {
+			if ignored || (inGit && strings.HasSuffix(name, ".lock")) {
 				continue
 			}
 			// Windows reports a dir as written when a child changes, sometimes late; the child's own event is enough.
@@ -190,12 +199,26 @@ func (wt *Watcher) loop() {
 			if ev.Has(fsnotify.Create) {
 				wt.mu.Lock()
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-					_ = wt.w.AddWith(ev.Name, fsnotify.WithBufferSize(4096))
+					if gen == wt.gen {
+						_ = filepath.WalkDir(name, func(p string, d fs.DirEntry, err error) error {
+							if err != nil || !d.IsDir() {
+								return nil
+							}
+							if wt.skip[p] || d.Name() == ".git" {
+								return filepath.SkipDir
+							}
+							_ = wt.w.AddWith(p, fsnotify.WithBufferSize(4096))
+							return nil
+						})
+					}
 				}
 				wt.mu.Unlock()
 			}
 			wt.mu.Lock()
-			name := filepath.Clean(ev.Name)
+			if gen != wt.gen {
+				wt.mu.Unlock()
+				continue
+			}
 			if generation != wt.gen {
 				clear(paths)
 				refs, index, all, generation = false, false, false, wt.gen
@@ -230,7 +253,11 @@ func (wt *Watcher) loop() {
 			}
 			wt.mu.Lock()
 			generation = wt.gen
+			dir, cancel := wt.path, wt.cancel
 			wt.mu.Unlock()
+			if dir != "" {
+				wt.setup(dir, cancel)
+			}
 			refs, index, all = true, true, true
 			timer.Reset(250 * time.Millisecond)
 		}

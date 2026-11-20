@@ -29,6 +29,15 @@ func (a *App) AddToGitignore(dir, path string) error    { return git.AddToGitign
 
 func (a *App) HeadSides(dir, path string) (git.Sides, error) { return git.HeadSides(dir, path) }
 
-func (a *App) CommitPartial(dir, message string, amend bool, files []git.PartialFile) error {
-	return git.CommitPartial(dir, message, amend, files)
+func (a *App) CommitPartial(dir, message string, amend bool, files []git.PartialFile) (*git.IndexRepair, error) {
+	err := git.CommitPartial(dir, message, amend, files)
+	var repair *git.IndexRepair
+	if errors.As(err, &repair) {
+		return repair, nil
+	}
+	return nil, err
+}
+
+func (a *App) RepairPartialIndex(dir string, repair git.IndexRepair) error {
+	return git.RepairPartialIndex(dir, repair)
 }

@@ -1,6 +1,9 @@
 package git
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 type Ref struct {
 	Name     string `json:"name"`
@@ -13,7 +16,7 @@ type Ref struct {
 }
 
 func Refs(dir string) ([]Ref, error) {
-	out, err := Run(dir, "for-each-ref", "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)",
+	out, err := Run(dir, "for-each-ref", "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(symref)",
 		"refs/heads", "refs/remotes", "refs/tags")
 	if err != nil {
 		return nil, err
@@ -21,7 +24,7 @@ func Refs(dir string) ([]Ref, error) {
 	refs := []Ref{}
 	for line := range strings.Lines(out) {
 		f := strings.Split(strings.TrimRight(line, "\n"), "\x1f")
-		if len(f) < 6 || strings.HasSuffix(f[0], "/HEAD") {
+		if len(f) < 7 || (f[6] != "" && strings.HasPrefix(f[0], "refs/remotes/") && strings.HasSuffix(f[0], "/HEAD")) {
 			continue
 		}
 		r := Ref{Full: f[0], Name: f[1], Hash: f[2], Upstream: f[3], Track: f[4], Current: f[5] == "*"}
@@ -97,6 +100,9 @@ func Revert(dir, hash string) error {
 
 // Reset mode is soft, mixed or hard.
 func Reset(dir, mode, hash string) error {
+	if mode != "soft" && mode != "mixed" && mode != "hard" {
+		return errors.New("invalid reset mode")
+	}
 	_, err := Run(dir, "reset", "--"+mode, hash)
 	return err
 }
