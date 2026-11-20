@@ -24,3 +24,11 @@ describe('lines', () => {
     expect(applyLines('x\n', 'x\ny', [{ fromA: 2, toA: 2, fromB: 2, toB: 4 }], 1, 1)).toBe('x\ny');
   });
 });
+
+it('stages and unstages a one-line change before a long unchanged tail', () => {
+  const tail = 'x\n'.repeat(180000);
+  const a = 'a\n' + tail, b = 'b\n' + tail;
+  const chunks = [{ fromA: 0, toA: 2, fromB: 0, toB: 2 }];
+  expect(applyLines(a, b, chunks, 0, 0)).toBe(b);
+  expect(revertLines(a, b, chunks, 0, 0)).toBe(a);
+});

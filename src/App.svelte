@@ -23,6 +23,14 @@
   const r = $derived(dir ? repo(dir) : null);
   const ui = $derived(dir ? uiOf(dir) : null);
 
+  $effect(() => {
+    const branch = r?.branch;
+    const wt = app.current;
+    if (!branch || !wt) return;
+    const detached = branch === '(detached)';
+    if (wt.detached !== detached || (!detached && wt.branch !== branch)) refreshRepos();
+  });
+
   function toggleLeft(k: 'commit' | 'project') {
     if (ui) ui.left = ui.left === k ? null : k;
   }

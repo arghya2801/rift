@@ -8,6 +8,10 @@ const nl = (t: string, off: number) => {
 };
 const range = (t: string, n: number, from: number, to: number) => [nl(t, from), from === to ? nl(t, from) : to > t.length ? n : nl(t, to)];
 
+function appendRange(result: string[], lines: string[], from: number, to = lines.length) {
+  for (let i = from; i < to; i++) result.push(lines[i]);
+}
+
 function join(lines: string[], eol: string) {
   return lines.map((l, i) => (i < lines.length - 1 && !l.endsWith('\n') ? l + eol : l)).join('');
 }
@@ -37,12 +41,12 @@ export function applyLines(a: string, b: string, chunks: readonly ChunkLike[], s
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    res.push(...la.slice(pos, p.a0));
-    if (!p.drop) res.push(...la.slice(p.a0, p.a1));
+    appendRange(res, la, pos, p.a0);
+    if (!p.drop) appendRange(res, la, p.a0, p.a1);
     for (let i = p.b0; i < p.b1; i++) if (p.picked(i)) res.push(lb[i]);
     pos = p.a1;
   }
-  res.push(...la.slice(pos));
+  appendRange(res, la, pos);
   return join(res, eolOf(a + b));
 }
 
@@ -52,11 +56,11 @@ export function revertLines(a: string, b: string, chunks: readonly ChunkLike[], 
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    res.push(...lb.slice(pos, p.b0));
-    if (p.drop) res.push(...la.slice(p.a0, p.a1));
+    appendRange(res, lb, pos, p.b0);
+    if (p.drop) appendRange(res, la, p.a0, p.a1);
     for (let i = p.b0; i < p.b1; i++) if (!p.picked(i)) res.push(lb[i]);
     pos = p.b1;
   }
-  res.push(...lb.slice(pos));
+  appendRange(res, lb, pos);
   return join(res, eolOf(a + b));
 }

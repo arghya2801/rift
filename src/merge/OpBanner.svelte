@@ -31,7 +31,7 @@
     {/if}
     <span class="grow"></span>
     <button class="link" disabled={conflicts.length > 0} title={conflicts.length ? 'Resolve conflicts first' : ''} onclick={() => act(Go.OpContinue(dir))}>Continue</button>
-    {#if op.kind === 'rebase' || op.kind === 'cherry-pick'}
+    {#if op.kind === 'rebase' || op.kind === 'cherry-pick' || op.kind === 'am' || op.kind === 'revert'}
       <button class="link" onclick={() => act(Go.OpSkip(dir))}>Skip</button>
     {/if}
     <button class="link danger" onclick={abort}>Abort</button>

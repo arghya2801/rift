@@ -58,7 +58,7 @@ export function closeTab(dir: string, id: string) {
 }
 
 const leaf = (p: string) => p.split('/').pop() ?? p;
-export const diffTab = (path: string, source: 'unstaged' | 'staged' | 'head', ): EditorTab => ({ kind: 'diff', id: `diff:${source}:${path}`, title: leaf(path), path, source });
+export const diffTab = (path: string, source: 'unstaged' | 'staged' | 'head', oldPath?: string): EditorTab => ({ kind: 'diff', id: `diff:${source}:${path}`, title: leaf(path), path, source, oldPath });
 export const commitDiffTab = (hash: string, path: string, oldPath?: string): EditorTab => ({ kind: 'diff', id: `diff:${hash}:${path}`, title: `${leaf(path)} @ ${hash.slice(0, 7)}`, path, source: 'commit', hash, oldPath });
 export const fileTab = (path: string, line?: number): EditorTab => ({ kind: 'file', id: `file:${path}`, title: leaf(path), path, line });
 export const mergeTab = (path: string): EditorTab => ({ kind: 'merge', id: `merge:${path}`, title: `Merge ${leaf(path)}`, path });

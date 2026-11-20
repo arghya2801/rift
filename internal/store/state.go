@@ -2,6 +2,8 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,20 +31,33 @@ func ConfigDir() string {
 }
 
 func Open(path string) *Store {
-	st := &Store{path: path}
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &st.s)
+	state, _ := read(path)
+	return &Store{path: path, s: state}
+}
+
+func read(path string) (State, error) {
+	state := State{Repos: []string{}, Mode: "staging", Changelists: map[string]map[string][]string{}}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return state, nil
 	}
-	if st.s.Repos == nil {
-		st.s.Repos = []string{}
+	if err != nil {
+		return state, err
 	}
-	if st.s.Mode == "" {
-		st.s.Mode = "staging"
+	var decoded State
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		return state, fmt.Errorf("read settings: %w", err)
 	}
-	if st.s.Changelists == nil {
-		st.s.Changelists = map[string]map[string][]string{}
+	if decoded.Repos != nil {
+		state.Repos = decoded.Repos
 	}
-	return st
+	if decoded.Mode != "" {
+		state.Mode = decoded.Mode
+	}
+	if decoded.Changelists != nil {
+		state.Changelists = decoded.Changelists
+	}
+	return state, nil
 }
 
 func (st *Store) Get() State {
@@ -62,17 +77,42 @@ func (st *Store) Get() State {
 func (st *Store) Update(f func(*State)) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	f(&st.s)
-	b, err := json.MarshalIndent(st.s, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(st.path), 0o700); err != nil {
 		return err
 	}
-	tmp := st.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	lock, err := os.OpenFile(st.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, st.path)
+	defer lock.Close()
+	if err := lockFile(lock); err != nil {
+		return err
+	}
+	next, err := read(st.path)
+	if err != nil {
+		return err
+	}
+	f(&next)
+	b, err := json.MarshalIndent(next, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(st.path), ".rift-state-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(b)
+	closeErr := tmp.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(tmp.Name(), st.path); err != nil {
+		return err
+	}
+	st.s = next
+	return nil
 }

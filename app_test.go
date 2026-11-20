@@ -83,7 +83,11 @@ func TestRebaseConflictContinueUsesQueue(t *testing.T) {
 	if e := git.ContinueEditor(dir); !strings.Contains(e, "--rift-msg") {
 		t.Fatalf("continue editor %q", e)
 	}
-	if err := git.ResolveFile(dir, "f", "2\n"); err != nil {
+	c, err := git.ConflictSides(dir, "f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.ResolveFile(dir, "f", "2\n", c.Stages); err != nil {
 		t.Fatal(err)
 	}
 	if err := git.OpContinue(dir); err != nil {
@@ -91,7 +95,13 @@ func TestRebaseConflictContinueUsesQueue(t *testing.T) {
 	}
 	if git.RebaseInProgress(dir) {
 		// c1 now conflicts against c2's content too.
-		git.ResolveFile(dir, "f", "1\n")
+		c, err := git.ConflictSides(dir, "f")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := git.ResolveFile(dir, "f", "1\n", c.Stages); err != nil {
+			t.Fatal(err)
+		}
 		if err := git.OpContinue(dir); err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +118,7 @@ func TestRebaseAbortClearsQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := strings.TrimSpace(run("rev-parse", "--path-format=absolute", "--git-dir"))
-	if _, err := os.Stat(filepath.Join(g, "rift-rebase")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(g, "rebase-merge", "rift-msg")); !os.IsNotExist(err) {
 		t.Fatal("stale rift-rebase queue left behind; a later plain rebase would reuse it")
 	}
 	if e := git.ContinueEditor(dir); e != "GIT_EDITOR=true" {
@@ -214,5 +224,99 @@ func TestInitialResolvesWorktreeRoot(t *testing.T) {
 		if got := a.Initial(); got != "" {
 			t.Fatalf("%v: %q", args, got)
 		}
+	}
+}
+
+func TestSavePreservesSiblingAndRejectsInvalidTextOnRead(t *testing.T) {
+	dir := t.TempDir()
+	a := NewApp(dir)
+	sibling := filepath.Join(dir, "f.rift-tmp")
+	if err := os.WriteFile(sibling, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteFile(dir, "f", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(sibling); err != nil || string(got) != "keep" {
+		t.Fatalf("%q %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad"), []byte{0xff}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ReadFile(dir, "bad"); err == nil {
+		t.Fatal("invalid UTF-8 reached editor")
+	}
+}
+
+func TestSecondRebasePreservesQueuedReword(t *testing.T) {
+	dir, run, base := conflictingRebase(t)
+	hash := strings.TrimSpace(run("rev-parse", "HEAD"))
+	if err := git.RunRebase(dir, base, []git.TodoItem{{Action: "pick", Hash: hash}}); err == nil {
+		t.Fatal("second rebase started")
+	}
+	g := strings.TrimSpace(run("rev-parse", "--path-format=absolute", "--git-dir"))
+	files, err := os.ReadDir(filepath.Join(g, "rebase-merge", "rift-msg"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("lost reword queue: %v", err)
+	}
+}
+
+func TestSaveRefusesExternalChangesAndDeletion(t *testing.T) {
+	dir := t.TempDir()
+	a := &App{}
+	if err := a.WriteFile(dir, "f", "external"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveFile(dir, "f", "draft", "old"); err == nil {
+		t.Fatal("overwrote external edit")
+	}
+	if s, err := a.ReadFile(dir, "f"); err != nil || s != "external" {
+		t.Fatalf("%q %v", s, err)
+	}
+	if err := a.SaveFile(dir, "f", "draft", "external"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "f")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveFile(dir, "f", "more", "draft"); err == nil {
+		t.Fatal("recreated deleted file")
+	}
+}
+
+func TestQuotedEditorTemplate(t *testing.T) {
+	args, err := editorArgs(`"C:\Program Files\Editor\edit.exe" -g "{path}:{line}"`)
+	if err != nil || len(args) != 3 || args[0] != `C:\Program Files\Editor\edit.exe` || args[2] != "{path}:{line}" {
+		t.Fatalf("%v %v", args, err)
+	}
+	if _, err := editorArgs("   "); err == nil {
+		t.Fatal("accepted blank executable")
+	}
+}
+
+func TestEditorRejectsOutsideDirectoryAndFileLinks(t *testing.T) {
+	dir, out := t.TempDir(), t.TempDir()
+	a := &App{}
+	if err := os.WriteFile(filepath.Join(out, "outside"), []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(out, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := a.ReadFile(dir, "linked/outside"); err == nil {
+		t.Fatal("read external file")
+	}
+	if err := a.WriteFile(dir, "linked/outside", "wrong"); err == nil {
+		t.Fatal("changed external file")
+	}
+	if err := os.Symlink(filepath.Join(out, "outside"), filepath.Join(dir, "file-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteFile(dir, "file-link", "wrong"); err == nil {
+		t.Fatal("replaced link")
+	}
+	b, err := os.ReadFile(filepath.Join(out, "outside"))
+	if err != nil || string(b) != "unchanged" {
+		t.Fatal(string(b), err)
 	}
 }

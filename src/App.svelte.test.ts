@@ -62,7 +62,7 @@ describe('App', () => {
     await fireEvent.click(await fileRow('changed.ts'));
     const tab = await screen.findByRole('tab', { name: /changed\.ts/ });
     expect(tab.getAttribute('aria-selected')).toBe('true');
-    await waitFor(() => expect(Go.FileSides).toHaveBeenCalledWith(fx.WT, 'src/changed.ts', false));
+    await waitFor(() => expect(Go.FileSides).toHaveBeenCalledWith(fx.WT, 'src/changed.ts', false, ''));
   });
 
   it('branch popup lists local and remote branches', async () => {

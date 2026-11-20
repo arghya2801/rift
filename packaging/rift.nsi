@@ -19,8 +19,6 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 Section "Rift"
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM rift.exe /T'
-  Pop $0
   SetOutPath "$INSTDIR"
   File /oname=rift.exe "${BINARY}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -35,10 +33,14 @@ Section "Rift"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rift" "NoRepair" 1
 SectionEnd
 Section "Uninstall"
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM rift.exe /T'
-  Pop $0
-  Delete "$SMPROGRAMS\Rift.lnk"
+  retry:
+  ClearErrors
   Delete "$INSTDIR\rift.exe"
+  IfErrors 0 removed
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Close the installed copy of Rift to uninstall it." IDRETRY retry
+  Abort
+  removed:
+  Delete "$SMPROGRAMS\Rift.lnk"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rift"

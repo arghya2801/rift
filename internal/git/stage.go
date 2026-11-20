@@ -1,22 +1,29 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 func Stage(dir string, paths []string) error {
-	_, err := Run(dir, append([]string{"add", "-A", "--"}, paths...)...)
+	if len(paths) == 0 {
+		return nil
+	}
+	_, err := Run(dir, append([]string{"--literal-pathspecs", "add", "-A", "--"}, paths...)...)
 	return err
 }
 
 func Unstage(dir string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
 	if _, err := Run(dir, "rev-parse", "--verify", "-q", "HEAD"); err != nil {
-		_, err = Run(dir, append([]string{"rm", "-q", "--cached", "--"}, paths...)...)
+		_, err = Run(dir, append([]string{"--literal-pathspecs", "rm", "-q", "--cached", "--"}, paths...)...)
 		return err
 	}
-	_, err := Run(dir, append([]string{"reset", "-q", "--"}, paths...)...)
+	_, err := Run(dir, append([]string{"--literal-pathspecs", "reset", "-q", "--"}, paths...)...)
 	return err
 }
 
@@ -30,34 +37,53 @@ func Discard(dir string, paths []string) error {
 	for _, p := range paths {
 		want[p] = true
 	}
-	var tracked []string
+	var tracked, untracked []string
 	for _, f := range s.Files {
 		if !want[f.Path] {
 			continue
 		}
 		if f.Index == '?' {
-			if err := os.Remove(filepath.Join(dir, filepath.FromSlash(f.Path))); err != nil {
-				return err
-			}
+			untracked = append(untracked, f.Path)
 			continue
 		}
 		tracked = append(tracked, f.Path)
-		if f.OrigPath != "" {
+		if f.OrigPath != "" && (f.Index == 'R' || f.Work == 'R') {
 			tracked = append(tracked, f.OrigPath)
 		}
 	}
-	if len(tracked) == 0 {
-		return nil
+	if len(tracked) != 0 {
+		source := "HEAD"
+		if s.unborn {
+			hash, err := Run(dir, "hash-object", "-w", "-t", "tree", "--stdin")
+			if err != nil {
+				return err
+			}
+			source = strings.TrimSpace(hash)
+		}
+		if _, err := Run(dir, append([]string{"--literal-pathspecs", "restore", "--source=" + source, "--staged", "--worktree", "--"}, tracked...)...); err != nil {
+			return err
+		}
 	}
-	_, err = Run(dir, append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, tracked...)...)
-	return err
+	for _, path := range untracked {
+		if err := os.Remove(filepath.Join(dir, filepath.FromSlash(path))); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AddToGitignore appends path (repo-relative, slash form) to the top-level .gitignore.
 func AddToGitignore(dir, path string) error {
 	name := filepath.Join(dir, ".gitignore")
-	b, _ := os.ReadFile(name)
-	line := "/" + strings.TrimPrefix(path, "/")
+	if strings.ContainsAny(path, "\r\n") {
+		return errors.New("filename cannot be represented by one ignore rule")
+	}
+	b, err := os.ReadFile(name)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	escape := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", " ", "\\ ")
+	line := "/" + escape.Replace(strings.TrimPrefix(path, "/"))
 	if len(b) > 0 && b[len(b)-1] != '\n' {
 		line = "\n" + line
 	}
@@ -93,11 +119,16 @@ func hashObject(dir, path, text string) (string, error) {
 }
 
 func fileMode(dir string, env []string, path string) string {
-	if out, _ := RunEnv(dir, env, "ls-files", "-s", "--", path); len(out) > 6 {
+	if out, _ := RunEnv(dir, env, "--literal-pathspecs", "ls-files", "-s", "--", path); len(out) > 6 {
 		return out[:6]
 	}
-	if out, _ := Run(dir, "ls-tree", "HEAD", "--", path); len(out) > 6 {
+	if out, _ := Run(dir, "--literal-pathspecs", "ls-tree", "HEAD", "--", path); len(out) > 6 {
 		return out[:6]
+	}
+	if st, err := os.Lstat(filepath.Join(dir, path)); err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0 {
+		if mode, _ := Run(dir, "config", "--bool", "core.filemode"); strings.TrimSpace(mode) == "true" {
+			return "100755"
+		}
 	}
 	return "100644"
 }

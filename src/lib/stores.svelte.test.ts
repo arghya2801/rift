@@ -134,6 +134,19 @@ describe('repo store', () => {
     expect(Go.Snapshot).toHaveBeenLastCalledWith('/refs', true);
   });
 
+  it('keeps the last good snapshot across a failed status refresh', async () => {
+    const r = repo('/failed-status');
+    await tick();
+    const snapshot = r.snap;
+    Go.Snapshot.mockResolvedValueOnce(Object.assign(fx.snapshot({ files: [] }), { error: 'status failed' }));
+    await r.refresh();
+    expect(r.error).toBe('status failed');
+    expect(r.snap).toBe(snapshot);
+    await r.refresh();
+    expect(Go.Snapshot).toHaveBeenLastCalledWith('/failed-status', true);
+    expect(r.error).toBe('');
+  });
+
   it('routes repo://changed to the matching repo only', async () => {
     const r = repo('/routed');
     await tick();
@@ -166,8 +179,8 @@ describe('shell state', () => {
   });
 
   it('partials is a plain reactive record', () => {
-    partials['/p'] = { 'a.ts': 'x' };
-    expect(partials['/p']['a.ts']).toBe('x');
+    partials['/p'] = { 'a.ts': { text: 'x', base: '' } };
+    expect(partials['/p']['a.ts'].text).toBe('x');
   });
 });
 

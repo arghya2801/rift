@@ -1,6 +1,7 @@
 package git
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -21,7 +22,7 @@ func RebaseTodo(dir, base string) ([]TodoItem, error) {
 	if base != "" {
 		rng = base + "..HEAD"
 	}
-	out, err := Run(dir, "log", "--reverse", "-z", "--format=%H%x1f%s%x1f%B", rng)
+	out, err := Run(dir, "log", "--no-merges", "--reverse", "-z", "--format=%H%x1f%s%x1f%B", rng)
 	if err != nil {
 		return nil, err
 	}
@@ -36,20 +37,16 @@ func RebaseTodo(dir, base string) ([]TodoItem, error) {
 	return items, nil
 }
 
-// writeRewords stores each reword as <i>.subject (the original subject) + <i>.msg. The editor
-// helper matches the message git opens against the subject, so extra editor openings (a
-// conflicted pick on --continue, a squash group) never consume another commit's message.
+// Git records the original commit hash in rebase-merge/done before invoking the editor.
 func writeRewords(msgDir string, items []TodoItem) error {
-	for i, it := range items {
-		if it.Action != "reword" || strings.TrimSpace(it.Message) == "" {
-			continue
-		}
-		base := filepath.Join(msgDir, fmt.Sprintf("%04d", i))
-		if err := os.WriteFile(base+".subject", []byte(it.Subject), 0o600); err != nil {
-			return err
-		}
-		if err := os.WriteFile(base+".msg", []byte(it.Message), 0o600); err != nil {
-			return err
+	for _, it := range items {
+		if it.Action == "reword" {
+			if strings.TrimSpace(it.Message) == "" {
+				return errors.New("empty reword message")
+			}
+			if err := os.WriteFile(filepath.Join(msgDir, it.Hash+".msg"), []byte(it.Message), 0o600); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -61,24 +58,39 @@ func RunRebase(dir, base string, items []TodoItem) error {
 	if len(items) == 0 {
 		return errors.New("nothing to rebase")
 	}
-	if a := items[0].Action; a == "squash" || a == "fixup" {
-		return errors.New("first commit cannot be squash or fixup")
+	havePick := false
+	for _, it := range items {
+		switch it.Action {
+		case "squash", "fixup":
+			if !havePick {
+				return errors.New("first remaining commit cannot be squash or fixup")
+			}
+		case "pick", "edit", "reword":
+			havePick = true
+		case "drop":
+		default:
+			return errors.New("unsupported rebase action")
+		}
+		if _, err := hex.DecodeString(it.Hash); err != nil || (len(it.Hash) != 40 && len(it.Hash) != 64) {
+			return errors.New("expected a full commit hash")
+		}
+		if strings.ContainsAny(it.Subject, "\r\n\x00") {
+			return errors.New("invalid commit subject")
+		}
+	}
+	if kind := OpKind(dir); kind != "" {
+		return fmt.Errorf("%s already in progress", kind)
 	}
 	g, err := gitDir(dir)
 	if err != nil {
 		return err
 	}
 	// Kept in the git dir so a later --continue still finds the queued messages.
-	tmp := filepath.Join(g, "rift-rebase")
-	os.RemoveAll(tmp)
-	if err := os.Mkdir(tmp, 0o700); err != nil {
+	tmp, err := os.MkdirTemp(g, "rift-rebase-start-")
+	if err != nil {
 		return err
 	}
-	defer func() {
-		if !RebaseInProgress(dir) {
-			os.RemoveAll(tmp)
-		}
-	}()
+	defer os.RemoveAll(tmp)
 	var todo strings.Builder
 	for _, it := range items {
 		fmt.Fprintf(&todo, "%s %s %s\n", it.Action, it.Hash, it.Subject)
@@ -99,15 +111,26 @@ func RunRebase(dir, base string, items []TodoItem) error {
 		return err
 	}
 	env := []string{"GIT_SEQUENCE_EDITOR=" + shq(exe) + " --rift-seq " + shq(todoFile), msgEditor(exe, msgDir)}
-	args := []string{"rebase", "-i", "--autostash"}
+	args := []string{"rebase", "-i", "--no-rebase-merges", "--autostash"}
 	if base == "" {
 		args = append(args, "--root")
 	} else {
 		args = append(args, base)
 	}
 	_, err = RunEnv(dir, env, args...)
-	if err != nil && RebaseInProgress(dir) {
-		return nil
+	if RebaseInProgress(dir) {
+		// Only this sequence editor consumes our todo. A competing start cannot own this stop.
+		if _, statErr := os.Stat(todoFile); os.IsNotExist(statErr) {
+			saved := filepath.Join(g, "rebase-merge", "rift-msg")
+			if moveErr := os.Rename(msgDir, saved); moveErr != nil {
+				return errors.Join(err, moveErr)
+			}
+			if err != nil {
+				if unmerged, statusErr := Run(dir, "ls-files", "--unmerged", "-z"); statusErr == nil && unmerged != "" {
+					return nil
+				}
+			}
+		}
 	}
 	return err
 }
@@ -120,10 +143,12 @@ func msgEditor(exe, msgDir string) string {
 // rift-started rebase, else a no-op editor.
 func ContinueEditor(dir string) string {
 	if g, err := gitDir(dir); err == nil && RebaseInProgress(dir) {
-		msgDir := filepath.Join(g, "rift-rebase", "msg")
+		msgDir := filepath.Join(g, "rebase-merge", "rift-msg")
 		if exe, err := os.Executable(); err == nil {
-			if _, err := os.Stat(msgDir); err == nil {
-				return msgEditor(exe, msgDir)
+			for _, dir := range []string{msgDir, filepath.Join(g, "rift-rebase", "msg")} {
+				if _, err := os.Stat(dir); err == nil {
+					return msgEditor(exe, dir)
+				}
 			}
 		}
 	}
