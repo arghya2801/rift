@@ -84,46 +84,6 @@ export namespace git {
 	        this.conflicts = source["conflicts"];
 	    }
 	}
-	export class PartialFile {
-	    path: string;
-	    text?: string;
-	    delete: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new PartialFile(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.text = source["text"];
-	        this.delete = source["delete"];
-	    }
-	}
-	export class Ref {
-	    name: string;
-	    full: string;
-	    kind: string;
-	    hash: string;
-	    upstream: string;
-	    track: string;
-	    current: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new Ref(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.full = source["full"];
-	        this.kind = source["kind"];
-	        this.hash = source["hash"];
-	        this.upstream = source["upstream"];
-	        this.track = source["track"];
-	        this.current = source["current"];
-	    }
-	}
 	export class Row {
 	    hash: string;
 	    parents: string[];
@@ -170,6 +130,83 @@ export namespace git {
 		    return a;
 		}
 	}
+	export class Page {
+	    rows: Row[];
+	    lanes: string[];
+	    more: boolean;
+	    restart: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Page(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rows = this.convertValues(source["rows"], Row);
+	        this.lanes = source["lanes"];
+	        this.more = source["more"];
+	        this.restart = source["restart"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PartialFile {
+	    path: string;
+	    text?: string;
+	    delete: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PartialFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.text = source["text"];
+	        this.delete = source["delete"];
+	    }
+	}
+	export class Ref {
+	    name: string;
+	    full: string;
+	    kind: string;
+	    hash: string;
+	    upstream: string;
+	    track: string;
+	    current: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Ref(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.full = source["full"];
+	        this.kind = source["kind"];
+	        this.hash = source["hash"];
+	        this.upstream = source["upstream"];
+	        this.track = source["track"];
+	        this.current = source["current"];
+	    }
+	}
+	
 	export class Sides {
 	    old: string;
 	    new: string;
@@ -203,6 +240,7 @@ export namespace git {
 	    }
 	}
 	export class Status {
+	    head?: string;
 	    branch: string;
 	    upstream: string;
 	    ahead: number;
@@ -215,6 +253,7 @@ export namespace git {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.head = source["head"];
 	        this.branch = source["branch"];
 	        this.upstream = source["upstream"];
 	        this.ahead = source["ahead"];
@@ -304,6 +343,9 @@ export namespace main {
 	export class Overview {
 	    repo: string;
 	    wt: git.Worktree;
+	    changed: number;
+	    conflicts: number;
+	    staged: number;
 	    status: git.Status;
 	    last: string;
 	    op: string;
@@ -317,6 +359,9 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.repo = source["repo"];
 	        this.wt = this.convertValues(source["wt"], git.Worktree);
+	        this.changed = source["changed"];
+	        this.conflicts = source["conflicts"];
+	        this.staged = source["staged"];
 	        this.status = this.convertValues(source["status"], git.Status);
 	        this.last = source["last"];
 	        this.op = source["op"];

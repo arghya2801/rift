@@ -7,7 +7,7 @@ import (
 	"rift/internal/store"
 )
 
-func (a *App) GetMode() string { return a.store.Get().Mode }
+func (a *App) GetMode() string { return a.store.Mode() }
 
 func (a *App) SetMode(m string) error {
 	if m != "staging" && m != "changelists" {
@@ -17,10 +17,7 @@ func (a *App) SetMode(m string) error {
 }
 
 func (a *App) Changelists(dir string) map[string][]string {
-	if l := a.store.Get().Changelists[dir]; l != nil {
-		return l
-	}
-	return map[string][]string{}
+	return a.store.Lists(dir)
 }
 
 func (a *App) SetChangelists(dir string, lists map[string][]string) error {

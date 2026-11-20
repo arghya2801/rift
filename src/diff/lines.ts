@@ -1,12 +1,15 @@
 export type ChunkLike = { fromA: number; toA: number; fromB: number; toB: number };
 
 const split = (t: string) => t.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-const nl = (t: string, off: number) => {
-  let n = 0;
-  for (let i = 0; i < off && i < t.length; i++) if (t[i] === '\n') n++;
-  return n;
-};
-const range = (t: string, n: number, from: number, to: number) => [nl(t, from), from === to ? nl(t, from) : to > t.length ? n : nl(t, to)];
+// CodeMirror chunks are ordered and non-overlapping on each side.
+function lineCursor(text: string, count: number) {
+  let pos = 0, line = 0;
+  return (offset: number) => {
+    if (offset > text.length) return count;
+    while (pos < offset) if (text.charCodeAt(pos++) === 10) line++;
+    return line;
+  };
+}
 
 function join(lines: string[], eol: string) {
   return lines.map((l, i) => (i < lines.length - 1 && !l.endsWith('\n') ? l + eol : l)).join('');
@@ -18,9 +21,10 @@ type Part = { a0: number; a1: number; b0: number; b1: number; drop: boolean; pic
 function parts(a: string, b: string, chunks: readonly ChunkLike[], selFrom: number, selTo: number) {
   const la = split(a), lb = split(b);
   const out: Part[] = [];
+  const lineA = lineCursor(a, la.length), lineB = lineCursor(b, lb.length);
   for (const c of chunks) {
-    const [a0, a1] = range(a, la.length, c.fromA, c.toA);
-    const [b0, b1] = range(b, lb.length, c.fromB, c.toB);
+    const [a0, a1] = [lineA(c.fromA), lineA(c.toA)];
+    const [b0, b1] = [lineB(c.fromB), lineB(c.toB)];
     const touches = b1 > b0 ? selFrom < b1 && selTo >= b0 : selFrom <= b0 && selTo >= b0 - 1;
     if (!touches) continue;
     const drop = b1 > b0 ? selFrom <= b0 && selTo >= b0 : true;
@@ -37,12 +41,12 @@ export function applyLines(a: string, b: string, chunks: readonly ChunkLike[], s
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    res.push(...la.slice(pos, p.a0));
-    if (!p.drop) res.push(...la.slice(p.a0, p.a1));
+    for (let i = pos; i < p.a0; i++) res.push(la[i]);
+    if (!p.drop) for (let i = p.a0; i < p.a1; i++) res.push(la[i]);
     for (let i = p.b0; i < p.b1; i++) if (p.picked(i)) res.push(lb[i]);
     pos = p.a1;
   }
-  res.push(...la.slice(pos));
+  for (let i = pos; i < la.length; i++) res.push(la[i]);
   return join(res, eolOf(a + b));
 }
 
@@ -52,11 +56,11 @@ export function revertLines(a: string, b: string, chunks: readonly ChunkLike[], 
   const res: string[] = [];
   let pos = 0;
   for (const p of out) {
-    res.push(...lb.slice(pos, p.b0));
-    if (p.drop) res.push(...la.slice(p.a0, p.a1));
+    for (let i = pos; i < p.b0; i++) res.push(lb[i]);
+    if (p.drop) for (let i = p.a0; i < p.a1; i++) res.push(la[i]);
     for (let i = p.b0; i < p.b1; i++) if (!p.picked(i)) res.push(lb[i]);
     pos = p.b1;
   }
-  res.push(...lb.slice(pos));
+  for (let i = pos; i < lb.length; i++) res.push(lb[i]);
   return join(res, eolOf(a + b));
 }

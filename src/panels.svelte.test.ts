@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
+import FileTree from './files/FileTree.svelte';
+import RebaseView from './rebase/RebaseView.svelte';
 import CommitPanel from './changes/CommitPanel.svelte';
 import LogPanel from './log/LogPanel.svelte';
 import { menu } from './lib/menu.svelte';
@@ -65,4 +67,41 @@ describe('LogPanel', () => {
     await fireEvent.click(await screen.findByText('Fix bug'));
     await waitFor(() => expect(Go.CommitFiles).toHaveBeenCalledWith('/log2', '2'.repeat(40)));
   });
+});
+
+it('keeps a 10,000-file folder scrollable with a bounded number of mounted rows', async () => {
+  const files = Array.from({ length: 10000 }, (_, i) => ({ ...fx.files[1], path: 'src/file-' + i }));
+  Go.Snapshot.mockResolvedValueOnce(fx.snapshot({ files }));
+  render(CommitPanel, { dir: '/large-folder' });
+  await row('file-0');
+  await fireEvent.click(screen.getByTitle('Group by directory'));
+  const tree = screen.getByRole('tree');
+  tree.scrollTop = 5000 * 24;
+  await fireEvent.scroll(tree);
+  await row('file-4998');
+  expect(screen.getAllByRole('treeitem').length).toBeLessThan(40);
+});
+
+it('keeps later project files reachable by keyboard without mounting the whole directory', async () => {
+  Go.ListDir.mockResolvedValueOnce(Array.from({ length: 401 }, (_, i) => ({ name: 'item-' + i, isDir: false })));
+  render(FileTree, { dir: '/paged-files' });
+  await screen.findByTitle('item-0');
+  expect(screen.getAllByRole('treeitem')).toHaveLength(200);
+  const next = screen.getByRole('button', { name: 'Next page' });
+  await fireEvent.click(next);
+  await fireEvent.click(next);
+  expect(screen.getAllByRole('treeitem')).toHaveLength(1);
+  expect(screen.getByTitle('item-400').tabIndex).toBe(0);
+});
+
+it('rebase keyboard moves cross a page boundary and keep the row selected', async () => {
+  const items = Array.from({ length: 201 }, (_, i) => ({ hash: String(i), subject: 'subject-' + i, action: 'pick', message: '' }));
+  Go.RebaseTodo.mockResolvedValueOnce(items);
+  render(RebaseView, { dir: '/paged-rebase', base: '', ondone: () => {} });
+  await screen.findByText('subject-0');
+  await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(screen.getByText('subject-200').closest('[role=row]')?.getAttribute('aria-selected')).toBe('true');
+  await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowUp', altKey: true });
+  expect(screen.getByText('subject-200').closest('[role=row]')?.getAttribute('aria-selected')).toBe('true');
+  expect(screen.getAllByRole('row')).toHaveLength(200);
 });

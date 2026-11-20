@@ -63,7 +63,7 @@ export async function cmBase(path: string): Promise<Extension[]> {
     highlightSelectionMatches(),
     syntaxHighlighting(cmHighlight),
     keymap.of([...searchKeymap, ...defaultKeymap]),
-    chrome(!isLight(findTheme(savedTheme()))),
+    chrome(!isLight(await findTheme(savedTheme()))),
     await cmLanguage(path),
   ];
 }

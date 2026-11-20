@@ -62,14 +62,25 @@
         items: files.filter((f) => f.conflict || (!untracked(f) && ch(f.work) !== '.')).map((f) => ({ f, letter: f.conflict ? 'U' : ch(f.work), source: 'unstaged' })),
       });
     } else {
-      const tracked = files.filter((f) => !untracked(f));
-      const assigned = new Set(Object.entries(lists).flatMap(([n, ps]) => (n === DEFAULT ? [] : ps)));
-      const item = (f: git.FileStatus): Item => ({ f, letter: workLetter(f), source: 'head' });
-      out.push({ key: `l:${DEFAULT}`, name: DEFAULT, kind: 'list', items: tracked.filter((f) => !assigned.has(f.path)).map(item) });
+      const fallback: Group = { key: 'l:' + DEFAULT, name: DEFAULT, kind: 'list', items: [] };
+      out.push(fallback);
+      const memberships = new Map<string, Group[]>();
       for (const [name, paths] of Object.entries(lists)) {
         if (name === DEFAULT) continue;
-        const set = new Set(paths);
-        out.push({ key: `l:${name}`, name, kind: 'list', items: tracked.filter((f) => set.has(f.path)).map(item) });
+        const g: Group = { key: 'l:' + name, name, kind: 'list', items: [] };
+        out.push(g);
+        for (const path of new Set(paths)) {
+          const groups = memberships.get(path);
+          if (groups) groups.push(g);
+          else memberships.set(path, [g]);
+        }
+      }
+      for (const f of files) {
+        if (untracked(f)) continue;
+        const item: Item = { f, letter: workLetter(f), source: 'head' };
+        const groups = memberships.get(f.path);
+        if (groups) for (const g of groups) g.items.push(item);
+        else fallback.items.push(item);
       }
     }
     if (fresh.length) out.push({ key: 'g:new', name: 'Unversioned Files', kind: 'new', items: fresh });
@@ -89,7 +100,9 @@
       const dirs = new Map<string, Item[]>();
       for (const item of g.items) {
         const d = parent(item.f.path);
-        dirs.set(d, [...(dirs.get(d) ?? []), item]);
+        const bucket = dirs.get(d);
+        if (bucket) bucket.push(item);
+        else dirs.set(d, [item]);
       }
       for (const [d, items] of [...dirs].sort(([a], [b]) => a.localeCompare(b))) {
         const fk = `${g.key}/${d}`;
@@ -129,7 +142,7 @@
 
   async function act(p: Promise<unknown>) {
     try {
-      await r.run(p);
+      await r.run(p, false);
     } catch (e) {
       toast(String(e));
     }
@@ -172,7 +185,8 @@
 
   function moveTo(paths: string[], name: string) {
     const next: Record<string, string[]> = {};
-    for (const [n, ps] of Object.entries(lists)) next[n] = ps.filter((p) => !paths.includes(p));
+    const moved = new Set(paths);
+    for (const [n, ps] of Object.entries(lists)) next[n] = ps.filter((p) => !moved.has(p));
     if (name !== DEFAULT) next[name] = [...(next[name] ?? []), ...paths];
     saveLists(next);
   }
@@ -243,15 +257,23 @@
     return row ? rowItems(row) : [];
   }
 
+  const rowHeight = 24;
+  let treeTop = $state(0), treeHeight = $state(400);
+  const start = $derived(Math.max(0, Math.min(Math.floor(treeTop / rowHeight), rows.length - Math.ceil(treeHeight / rowHeight)) - 8));
+  const end = $derived(Math.min(rows.length, start + Math.ceil(treeHeight / rowHeight) + 16));
+
   function onKey(e: KeyboardEvent) {
     const i = rows.findIndex((x) => x.key === selected);
     const row = rows[i];
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+      const index = Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+      const next = rows[index];
       if (next) {
         select(next);
-        treeEl.querySelector(`[data-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: 'nearest' });
+        const top = index * rowHeight;
+        if (top < treeEl.scrollTop) treeEl.scrollTop = top;
+        else if (top + rowHeight > treeEl.scrollTop + treeHeight) treeEl.scrollTop = top + rowHeight - treeHeight;
       }
       return;
     }
@@ -342,8 +364,9 @@
     </select>
   </header>
 
-  <div class="tree" role="tree" tabindex="0" bind:this={treeEl} onkeydown={onKey}>
-    {#each rows as row (row.key)}
+  <div class="tree" role="tree" tabindex="0" bind:this={treeEl} bind:clientHeight={treeHeight} onscroll={(e) => (treeTop = e.currentTarget.scrollTop)} onkeydown={onKey}>
+    <div aria-hidden="true" style="height:{start * rowHeight}px"></div>
+    {#each rows.slice(start, end) as row (row.key)}
       {@const items = rowItems(row)}
       <div
         class="row {row.kind}"
@@ -351,6 +374,7 @@
         style="padding-left:{6 + row.depth * 16}px"
         data-key={row.key}
         role="treeitem"
+        aria-level={row.depth + 1}
         aria-selected={selected === row.key}
         tabindex="-1"
         onclick={() => select(row)}
@@ -391,6 +415,7 @@
     {:else}
       <div class="empty dim">No changes</div>
     {/each}
+    <div aria-hidden="true" style="height:{(rows.length - end) * rowHeight}px"></div>
   </div>
 
   <button class="splitter" aria-label="Resize commit message" tabindex="-1" onmousedown={drag}></button>

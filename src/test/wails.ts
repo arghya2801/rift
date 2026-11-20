@@ -1,3 +1,4 @@
+import type { git } from '../../wailsjs/go/models';
 import { vi } from 'vitest';
 import * as fx from './fixtures';
 
@@ -28,6 +29,7 @@ export const Go = {
   Initial: vi.fn(async () => ''),
   LastMessage: vi.fn(async () => 'last message\n'),
   ListDir: vi.fn(async (_d: string, rel: string) => (rel ? [{ name: 'changed.ts', isDir: false }] : [{ name: 'src', isDir: true }, { name: 'notes.txt', isDir: false }])),
+  LogPage: vi.fn(async () => ({ rows: fx.logRows, lanes: [], more: false, restart: false })),
   Log: vi.fn(async () => fx.logRows),
   Merge: vi.fn(async () => {}),
   OpAbort: vi.fn(async () => {}),
@@ -43,7 +45,7 @@ export const Go = {
   Push: vi.fn(async () => 'pushed'),
   ReadFile: vi.fn(async () => 'file text\n'),
   Rebase: vi.fn(async () => {}),
-  RebaseTodo: vi.fn(async () => []),
+  RebaseTodo: vi.fn(async (): Promise<git.TodoItem[]> => []),
   Refs: vi.fn(async () => fx.refs),
   RemoveRepo: vi.fn(async () => {}),
   RemoveWorktree: vi.fn(async () => {}),

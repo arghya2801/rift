@@ -40,7 +40,14 @@ func Run(dir string, args ...string) (string, error) {
 }
 
 func RunEnv(dir string, env []string, args ...string) (string, error) {
+	return runInput(dir, env, "", args...)
+}
+
+func runInput(dir string, env []string, input string, args ...string) (string, error) {
 	cmd := command(dir, env, args...)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

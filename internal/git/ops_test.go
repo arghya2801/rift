@@ -1,6 +1,8 @@
 package git
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -573,5 +575,43 @@ func TestGraphInvariants(t *testing.T) {
 				seen[p] = true
 			}
 		}
+	}
+}
+
+func TestBatchWholeFileCommit(t *testing.T) {
+	dir := newRepo(t)
+	var files []PartialFile
+	for i := range 500 {
+		path := fmt.Sprintf("file [%03d].txt", i)
+		write(t, dir, path, "data")
+		files = append(files, PartialFile{Path: path})
+	}
+	trace := filepath.Join(t.TempDir(), "trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	if err := CommitPartial(dir, "batch", false, files); err != nil {
+		t.Fatal(err)
+	}
+	if count := len(strings.Split(strings.TrimSpace(must(t, dir, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")), "\n")); count != 500 {
+		t.Fatal(count)
+	}
+	b, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for line := range strings.Lines(string(b)) {
+		var event struct {
+			Event string
+			Argv  []string
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "start" && slices.Contains(event.Argv, "update-index") {
+			calls++
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("500 whole files required %d update-index calls, want 1", calls)
 	}
 }

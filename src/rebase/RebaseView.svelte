@@ -2,6 +2,7 @@
   import * as Go from '../../wailsjs/go/main/App';
   import { git } from '../../wailsjs/go/models';
   import { repo } from '../lib/repo.svelte';
+  import PagedRows, { pageSize } from '../lib/PagedRows.svelte';
   import Icon from '../lib/Icon.svelte';
 
   let { dir, base, ondone }: { dir: string; base: string; ondone: () => void } = $props();
@@ -11,6 +12,7 @@
   let items = $state<git.TodoItem[]>([]);
   let error = $state('');
   let busy = $state(false);
+  let page = $state(0);
   let dragFrom = $state(-1);
   let sel = $state(0);
 
@@ -19,10 +21,11 @@
   });
 
   function move(from: number, to: number) {
-    if (to < 0 || to >= items.length || from === to) return;
+    if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return;
     const [it] = items.splice(from, 1);
     items.splice(to, 0, it);
     sel = to;
+    page = Math.floor(sel / pageSize);
   }
 
   function setAction(a: string) {
@@ -38,6 +41,7 @@
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       sel = Math.max(0, Math.min(items.length - 1, sel + (e.key === 'ArrowUp' ? -1 : 1)));
+      page = Math.floor(sel / pageSize);
     }
   }
 
@@ -71,39 +75,45 @@
 {#if error || invalid}<div class="error">{error || invalid}</div>{/if}
 <div class="table" role="grid" tabindex="0" onkeydown={keys}>
   <div class="thead"><span class="c-grip"></span><span class="c-action">Action</span><span class="c-hash">Hash</span><span>Subject</span></div>
-  {#each items as it, i (it.hash)}
-    <div
-      class="row"
-      class:sel={sel === i}
-      class:drop={it.action === 'drop'}
-      class:dragging={dragFrom === i}
-      draggable="true"
-      role="row"
-      tabindex="-1"
-      aria-selected={sel === i}
-      onclick={() => (sel = i)}
-      onkeydown={() => {}}
-      ondragstart={() => (dragFrom = i)}
-      ondragover={(e) => e.preventDefault()}
-      ondrop={() => {
-        move(dragFrom, i);
-        dragFrom = -1;
-      }}
-      ondragend={() => (dragFrom = -1)}
-    >
-      <span class="c-grip"><Icon name="more" size={14} /></span>
-      <span class="c-action">
-        <select bind:value={it.action} onclick={(e) => e.stopPropagation()}>
-          {#each ACTIONS as a}<option value={a} disabled={i === 0 && (a === 'squash' || a === 'fixup')}>{a}</option>{/each}
-        </select>
-      </span>
-      <span class="c-hash mono">{it.hash.slice(0, 8)}</span>
-      <span class="subject">{it.subject}</span>
-    </div>
-    {#if it.action === 'reword'}
-      <div class="msg"><textarea bind:value={it.message} rows="3"></textarea></div>
-    {/if}
-  {/each}
+  <PagedRows {items} bind:page keyFor={(item) => item.hash} onpage={(p) => (sel = p * pageSize)}>
+    {#snippet children(it, i)}
+      <div
+        class="row"
+        class:sel={sel === i}
+        class:drop={it.action === 'drop'}
+        class:dragging={dragFrom === i}
+        draggable="true"
+        role="row"
+        tabindex="-1"
+        aria-selected={sel === i}
+        onclick={() => (sel = i)}
+        onkeydown={() => {}}
+        ondragstart={(event) => {
+          dragFrom = i;
+          event.dataTransfer?.setData('application/x-rift-rebase', it.hash);
+        }}
+        ondragover={(e) => e.preventDefault()}
+        ondrop={(event) => {
+          const hash = event.dataTransfer?.getData('application/x-rift-rebase');
+          if (hash) move(items.findIndex((item) => item.hash === hash), i);
+          dragFrom = -1;
+        }}
+        ondragend={() => (dragFrom = -1)}
+      >
+        <span class="c-grip"><Icon name="more" size={14} /></span>
+        <span class="c-action">
+          <select bind:value={it.action} onclick={(e) => e.stopPropagation()}>
+            {#each ACTIONS as a}<option value={a} disabled={i === 0 && (a === 'squash' || a === 'fixup')}>{a}</option>{/each}
+          </select>
+        </span>
+        <span class="c-hash mono">{it.hash.slice(0, 8)}</span>
+        <span class="subject">{it.subject}</span>
+      </div>
+      {#if it.action === 'reword'}
+        <div class="msg"><textarea bind:value={it.message} rows="3"></textarea></div>
+      {/if}
+    {/snippet}
+  </PagedRows>
 </div>
 <div class="footer">
   <span class="grow"></span>

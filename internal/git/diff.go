@@ -70,13 +70,14 @@ func blobs(dir string, specs ...string) []string {
 				return
 			}
 			b, _ := io.ReadAll(io.LimitReader(out, MaxBlob+1))
-			io.Copy(io.Discard, out)
-			if cmd.Wait() != nil {
+			if len(b) > MaxBlob {
+				_ = out.Close()
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				res[i] = "\x00"
 				return
 			}
-			if len(b) > MaxBlob {
-				res[i] = "\x00"
-			} else {
+			if cmd.Wait() == nil {
 				res[i] = string(b)
 			}
 		})

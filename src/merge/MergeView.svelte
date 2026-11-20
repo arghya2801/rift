@@ -7,7 +7,7 @@
   import { cmBase } from '../lib/cm';
   import { sure, toast } from '../lib/menu.svelte';
   import Icon from '../lib/Icon.svelte';
-  import { parse, render, hasMarkers, type Segment } from './markers';
+  import { parse, render, markerCount, markerDelta, type Segment } from './markers';
 
   let { dir, path, ondone }: { dir: string; path: string; ondone: () => void } = $props();
 
@@ -19,7 +19,8 @@
   let segments = $state<Segment[]>([]);
   let choices = $state<Choice[]>([]);
   let edited = $state(false);
-  let unresolved = $state(true);
+  let markers = $state(1);
+  const unresolved = $derived(markers > 0);
   let error = $state('');
   let result: EditorView | undefined;
   let syncing = false;
@@ -48,7 +49,6 @@
     syncing = true;
     result.dispatch({ changes: { from: 0, to: result.state.doc.length, insert: text } });
     syncing = false;
-    unresolved = hasMarkers(text);
   }
 
   function choose(i: number, c: Choice) {
@@ -107,13 +107,13 @@
             ...base,
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return;
-              unresolved = hasMarkers(u.state.doc.toString());
+              markers += markerDelta(u.startState.doc, u.state.doc, u.changes);
               if (!syncing) edited = true;
             }),
           ],
         });
         views.push(result);
-        unresolved = hasMarkers(result.state.doc.toString());
+        markers = markerCount(result.state.doc);
       } catch (e) {
         error = String(e);
       }

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,18 +31,60 @@ type Row struct {
 }
 
 // Log returns up to limit commits from all branches, tags and HEAD with graph lanes.
-// ponytail: whole graph computed per call; page/cache it when repos with 100k+ commits feel slow.
 func Log(dir string, limit int, extra ...string) ([]Row, error) {
+	commits, err := logCommits(dir, limit, 0, extra...)
+	if err != nil {
+		return nil, err
+	}
+	return Graph(commits), nil
+}
+
+func logCommits(dir string, limit, skip int, extra ...string) ([]Commit, error) {
 	args := append([]string{"log", "--topo-order", "-z", "-n", strconv.Itoa(limit),
 		"--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s"}, extra...)
 	if len(extra) == 0 {
 		args = append(args, "--branches", "--remotes", "--tags", "HEAD")
 	}
+	if skip > 0 {
+		args = append(args, "--skip="+strconv.Itoa(skip))
+	}
 	out, err := Run(dir, args...)
 	if err != nil {
 		return nil, err
 	}
-	return Graph(parseLog(out)), nil
+	return parseLog(out), nil
+}
+
+type Page struct {
+	Rows    []Row    `json:"rows"`
+	Lanes   []string `json:"lanes"`
+	More    bool     `json:"more"`
+	Restart bool     `json:"restart"`
+}
+
+// Include the previous page's last commit to detect a changed traversal between requests.
+func LogPage(dir string, offset, limit int, anchor string, lanes []string) (Page, error) {
+	if offset < 0 || limit <= 0 || limit > 5000 {
+		return Page{}, errors.New("invalid log page")
+	}
+	skip, count := offset, limit+1
+	if offset > 0 {
+		skip--
+		count++
+	}
+	commits, err := logCommits(dir, count, skip)
+	if err != nil {
+		return Page{}, err
+	}
+	if offset > 0 {
+		if len(commits) == 0 || commits[0].Hash != anchor {
+			return Page{Restart: true}, nil
+		}
+		commits = commits[1:]
+	}
+	more := len(commits) > limit
+	rows, next := graphPage(commits[:min(len(commits), limit)], slices.Clone(lanes))
+	return Page{Rows: rows, Lanes: next, More: more}, nil
 }
 
 func parseLog(out string) []Commit {
@@ -65,7 +108,11 @@ func parseLog(out string) []Commit {
 
 // Graph assigns each commit a lane. lanes[i] holds the hash lane i is waiting for.
 func Graph(commits []Commit) []Row {
-	var lanes []string
+	rows, _ := graphPage(commits, nil)
+	return rows
+}
+
+func graphPage(commits []Commit, lanes []string) ([]Row, []string) {
 	rows := make([]Row, len(commits))
 	free := func() int {
 		for i, h := range lanes {
@@ -76,9 +123,10 @@ func Graph(commits []Commit) []Row {
 		lanes = append(lanes, "")
 		return len(lanes) - 1
 	}
+	var bottom []int
 	for n, c := range commits {
 		col := -1
-		var lines []Line
+		lines := []Line{}
 		for i, h := range lanes {
 			if h == "" {
 				continue
@@ -110,11 +158,15 @@ func Graph(commits []Commit) []Row {
 			if target < 0 {
 				target = free()
 			}
+			for len(bottom) <= target {
+				bottom = append(bottom, 0)
+			}
+			bottom[target] = n + 1
 			lanes[target] = p
 			lines = append(lines, Line{From: col, To: target, Bottom: true})
 		}
 		for i, h := range lanes {
-			if h != "" && !hasBottom(lines, i) {
+			if h != "" && (i >= len(bottom) || bottom[i] != n+1) {
 				lines = append(lines, Line{From: i, To: i, Bottom: true})
 			}
 		}
@@ -123,7 +175,7 @@ func Graph(commits []Commit) []Row {
 		}
 		rows[n] = Row{Commit: c, Col: col, Lines: lines}
 	}
-	return rows
+	return rows, lanes
 }
 
 type ChangedFile struct {
@@ -162,13 +214,4 @@ func CommitSides(dir, hash, path, oldPath string) Sides {
 func CommitMessage(dir, hash string) string {
 	out, _ := Run(dir, "log", "-1", "--format=%B", hash)
 	return strings.TrimSpace(out)
-}
-
-func hasBottom(lines []Line, to int) bool {
-	for _, l := range lines {
-		if l.Bottom && l.To == to {
-			return true
-		}
-	}
-	return false
 }

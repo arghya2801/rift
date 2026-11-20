@@ -14,6 +14,7 @@ type FileStatus struct {
 }
 
 type Status struct {
+	Head     string       `json:"head,omitempty"`
 	Branch   string       `json:"branch"`
 	Upstream string       `json:"upstream"`
 	Ahead    int          `json:"ahead"`
@@ -44,6 +45,8 @@ func parseStatus(out string) Status {
 				continue
 			}
 			switch parts[1] {
+			case "branch.oid":
+				s.Head = parts[2]
 			case "branch.head":
 				s.Branch = parts[2]
 			case "branch.upstream":

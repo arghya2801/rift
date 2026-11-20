@@ -15,6 +15,8 @@ function group(dir: string): Group {
   return groups[dir];
 }
 
+export function forgetTabs(dir: string) { delete groups[dir]; }
+
 const none: EditorTab[] = [];
 export const tabsOf = (dir: string) => groups[dir]?.tabs ?? none;
 export const activeTab = (dir: string) => {

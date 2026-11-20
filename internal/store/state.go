@@ -45,16 +45,38 @@ func Open(path string) *Store {
 	return st
 }
 
+func (st *Store) Mode() string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.s.Mode
+}
+
+func (st *Store) Repos() []string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return slices.Clone(st.s.Repos)
+}
+
+func (st *Store) Lists(dir string) map[string][]string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return cloneLists(st.s.Changelists[dir])
+}
+
+func cloneLists(lists map[string][]string) map[string][]string {
+	m := make(map[string][]string, len(lists))
+	for name, paths := range lists {
+		m[name] = slices.Clone(paths)
+	}
+	return m
+}
+
 func (st *Store) Get() State {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	cl := make(map[string]map[string][]string, len(st.s.Changelists))
 	for dir, lists := range st.s.Changelists {
-		m := make(map[string][]string, len(lists))
-		for name, paths := range lists {
-			m[name] = slices.Clone(paths)
-		}
-		cl[dir] = m
+		cl[dir] = cloneLists(lists)
 	}
 	return State{Repos: slices.Clone(st.s.Repos), Mode: st.s.Mode, Changelists: cl}
 }

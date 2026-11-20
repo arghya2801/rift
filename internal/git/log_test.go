@@ -1,6 +1,7 @@
 package git
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -57,5 +58,32 @@ func TestLogReal(t *testing.T) {
 	}
 	if files, _ := CommitFiles(dir, rows[1].Hash); len(files) != 1 || files[0].Status != "A" {
 		t.Fatalf("root %+v", files)
+	}
+}
+
+func TestHistoryPagesPreserveRowsAndRejectMovedAnchor(t *testing.T) {
+	dir := newRepo(t)
+	for i := 0; i < 5; i++ {
+		must(t, dir, "commit", "--allow-empty", "-qm", "another")
+	}
+	want, err := Log(dir, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := LogPage(dir, 0, 3, "", nil)
+	if err != nil || !first.More {
+		t.Fatal(first, err)
+	}
+	next, err := LogPage(dir, 3, 3, first.Rows[2].Hash, first.Lanes)
+	if err != nil || next.More {
+		t.Fatal(next, err)
+	}
+	if !reflect.DeepEqual(append(first.Rows, next.Rows...), want) {
+		t.Fatal("paged rows differ")
+	}
+	must(t, dir, "commit", "--allow-empty", "-qm", "move HEAD")
+	changed, err := LogPage(dir, 3, 3, first.Rows[2].Hash, first.Lanes)
+	if err != nil || !changed.Restart {
+		t.Fatal(changed, err)
 	}
 }

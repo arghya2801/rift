@@ -2,11 +2,13 @@
   import { tick } from 'svelte';
   import { fuzzyScore } from './fuzzy';
   import { commands, type Command } from './commands.svelte';
+  import { toast } from './menu.svelte';
   import { applyTheme, savedTheme, themeNames } from './themes';
 
-  applyTheme(savedTheme());
+  const setTheme = (name: string) => applyTheme(name).catch((e) => toast(String(e)));
+  setTheme(savedTheme());
 
-  const builtins: Command[] = themeNames.map((n) => ({ id: `theme:${n}`, title: `Theme: ${n}`, run: () => applyTheme(n) }));
+  const builtins: Command[] = themeNames.map((n) => ({ id: `theme:${n}`, title: `Theme: ${n}`, run: () => setTheme(n) }));
 
   let dialog: HTMLDialogElement;
   let input = $state<HTMLInputElement>();

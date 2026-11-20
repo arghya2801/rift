@@ -36,7 +36,9 @@ func NewApp(config string) *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.watcher, _ = watch.New(func(p string, g bool) { wr.EventsEmit(ctx, "repo://changed", p, g) })
+	a.watcher, _ = watch.New(func(p string, refs, index bool, paths []string) {
+		wr.EventsEmit(ctx, "repo://changed", p, refs, index, paths)
+	})
 }
 
 // Initial pins the repo given as the first CLI argument and returns its worktree path ("" if none).
@@ -57,26 +59,38 @@ func (a *App) Initial() string {
 // Watch switches the live-refresh watcher to dir ("" stops it).
 func (a *App) Watch(dir string) {
 	if a.watcher != nil {
-		go a.watcher.Set(dir)
+		a.watcher.Switch(dir)
 	}
 }
 
-func (a *App) Repos() []Repo {
-	paths := a.store.Get().Repos
-	out := make([]Repo, len(paths))
+// Inventory and dashboard requests share a process limit, including overlapping refreshes.
+var dashboardSlots = make(chan struct{}, 4)
+
+func parallel(n int, fn func(int)) {
 	var wg sync.WaitGroup
-	for i, p := range paths {
+	for i := range n {
+		dashboardSlots <- struct{}{}
 		wg.Go(func() {
-			r := Repo{Path: p, Name: filepath.Base(p)}
-			if wts, err := git.Worktrees(p); err != nil {
-				r.Error = err.Error()
-			} else {
-				r.Worktrees = wts
-			}
-			out[i] = r
+			defer func() { <-dashboardSlots }()
+			fn(i)
 		})
 	}
 	wg.Wait()
+}
+
+func (a *App) Repos() []Repo {
+	paths := a.store.Repos()
+	out := make([]Repo, len(paths))
+	parallel(len(paths), func(i int) {
+		p := paths[i]
+		r := Repo{Path: p, Name: filepath.Base(p)}
+		if wts, err := git.Worktrees(p); err != nil {
+			r.Error = err.Error()
+		} else {
+			r.Worktrees = wts
+		}
+		out[i] = r
+	})
 	return out
 }
 
@@ -110,39 +124,47 @@ func (a *App) PruneWorktrees(mainDir string) error { return git.PruneWorktrees(m
 
 // Overview is one dashboard card per worktree of every pinned repo; status runs concurrently.
 type Overview struct {
-	Repo   string       `json:"repo"`
-	Wt     git.Worktree `json:"wt"`
-	Status git.Status   `json:"status"`
-	Last   string       `json:"last"`
-	Op     string       `json:"op"`
-	Error  string       `json:"error,omitempty"`
+	Repo      string       `json:"repo"`
+	Wt        git.Worktree `json:"wt"`
+	Changed   int          `json:"changed"`
+	Conflicts int          `json:"conflicts"`
+	Staged    int          `json:"staged"`
+	Status    git.Status   `json:"status"`
+	Last      string       `json:"last"`
+	Op        string       `json:"op"`
+	Error     string       `json:"error,omitempty"`
 }
 
-func (a *App) Overview() []Overview {
+func (a *App) Overview(repos []Repo) []Overview {
 	var out []Overview
-	for _, r := range a.Repos() {
+	for _, r := range repos {
 		for _, w := range r.Worktrees {
 			if !w.Bare {
 				out = append(out, Overview{Repo: r.Name, Wt: w})
 			}
 		}
 	}
-	var wg sync.WaitGroup
-	for i := range out {
-		wg.Go(func() {
-			o := &out[i]
-			s, err := git.GetStatus(o.Wt.Path)
-			if err != nil {
-				o.Error = err.Error()
-				return
+	parallel(len(out), func(i int) {
+		o := &out[i]
+		s, err := git.GetStatus(o.Wt.Path)
+		if err != nil {
+			o.Error = err.Error()
+			return
+		}
+		o.Changed = len(s.Files)
+		for _, f := range s.Files {
+			if f.Conflict {
+				o.Conflicts++
+			} else if f.Index != '.' && f.Index != '?' {
+				o.Staged++
 			}
-			o.Status = s
-			last, _ := git.Run(o.Wt.Path, "log", "-1", "--format=%s (%ar)")
-			o.Last = strings.TrimSpace(last)
-			o.Op = git.OpName(o.Wt.Path)
-		})
-	}
-	wg.Wait()
+		}
+		s.Files = nil
+		o.Status = s
+		last, _ := git.Run(o.Wt.Path, "log", "-1", "--format=%s (%ar)")
+		o.Last = strings.TrimSpace(last)
+		o.Op = git.OpName(o.Wt.Path)
+	})
 	return out
 }
 
@@ -180,6 +202,9 @@ func (a *App) Commit(dir, message string, amend bool) error {
 func (a *App) LastMessage(dir string) string { return git.LastMessage(dir) }
 
 func (a *App) Log(dir string, limit int) ([]git.Row, error) { return git.Log(dir, limit) }
+func (a *App) LogPage(dir string, offset, limit int, anchor string, lanes []string) (git.Page, error) {
+	return git.LogPage(dir, offset, limit, anchor, lanes)
+}
 func (a *App) CommitFiles(dir, hash string) ([]git.ChangedFile, error) {
 	return git.CommitFiles(dir, hash)
 }

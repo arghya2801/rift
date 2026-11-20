@@ -9,9 +9,13 @@
   let loading = $state(false);
   let filter = $state('');
 
-  async function load() {
+  let request = 0;
+  async function load(repos: main.Repo[]) {
+    const id = ++request;
     loading = true;
-    cards = (await Go.Overview().catch(() => [])) ?? [];
+    const next = repos.length ? (await Go.Overview(repos).catch(() => [])) ?? [] : [];
+    if (id !== request) return;
+    cards = next;
     loading = false;
   }
 
@@ -19,16 +23,7 @@
   const shown = $derived(cards.filter((c) => !q || `${c.repo} ${c.status.branch} ${c.wt.branch} ${c.wt.path}`.toLowerCase().includes(q)));
   const label = (w: git.Worktree) => w.branch || (w.detached ? w.head.slice(0, 8) : 'bare');
   const leaf = (p: string) => p.split(/[\\/]/).pop() ?? p;
-  const counts = (s: git.Status) => {
-    const f = s.files ?? [];
-    return {
-      changed: f.length,
-      conflicts: f.filter((x) => x.conflict).length,
-      staged: f.filter((x) => !x.conflict && x.index !== 46 && x.index !== 63).length,
-    };
-  };
-
-  load();
+  $effect(() => { load(app.repos); });
 </script>
 
 <div class="welcome">
@@ -67,7 +62,7 @@
     <div class="top">
       <h1>Worktrees</h1>
       <span class="grow"></span>
-      <button class="outline" onclick={load} disabled={loading}><Icon name="refresh" size={14} /> {loading ? 'Loading…' : 'Refresh'}</button>
+      <button class="outline" onclick={() => load(app.repos)} disabled={loading}><Icon name="refresh" size={14} /> {loading ? 'Loading…' : 'Refresh'}</button>
       <button class="primary" onclick={addRepo}>Open…</button>
     </div>
     {#if !app.repos.length}
@@ -78,21 +73,20 @@
     {/if}
     <div class="grid">
       {#each shown as c (c.wt.path)}
-        {@const n = counts(c.status)}
         <button class="card" onclick={() => select(c.wt)} title={c.wt.path}>
           <div class="row">
             <span class="dim small">{c.repo}</span>
             <span class="grow"></span>
             {#if c.op}<span class="pill warn">{c.op}</span>{/if}
-            {#if n.conflicts}<span class="pill bad">{n.conflicts} conflicts</span>{/if}
+            {#if c.conflicts}<span class="pill bad">{c.conflicts} conflicts</span>{/if}
           </div>
           <div class="row branch"><Icon name="branch" size={14} /> <span class="grow">{c.status.branch || label(c.wt)}</span></div>
           {#if c.error}
             <div class="bad small">{c.error}</div>
           {:else}
             <div class="row small">
-              <span class:dim={!n.changed}>{n.changed} changed</span>
-              {#if n.staged}<span>· {n.staged} staged</span>{/if}
+              <span class:dim={!c.changed}>{c.changed} changed</span>
+              {#if c.staged}<span>· {c.staged} staged</span>{/if}
               <span class="grow"></span>
               {#if c.status.upstream}<span class="dim">↑{c.status.ahead} ↓{c.status.behind}</span>{/if}
             </div>

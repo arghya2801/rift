@@ -106,6 +106,10 @@ export function Log(arg1, arg2) {
   return window['go']['main']['App']['Log'](arg1, arg2);
 }
 
+export function LogPage(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['LogPage'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function Merge(arg1, arg2) {
   return window['go']['main']['App']['Merge'](arg1, arg2);
 }
@@ -134,8 +138,8 @@ export function OpenInATC(arg1) {
   return window['go']['main']['App']['OpenInATC'](arg1);
 }
 
-export function Overview() {
-  return window['go']['main']['App']['Overview']();
+export function Overview(arg1) {
+  return window['go']['main']['App']['Overview'](arg1);
 }
 
 export function PickFolder() {

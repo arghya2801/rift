@@ -3,7 +3,7 @@
   import { EditorView, keymap, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
   import { history, historyKeymap, indentWithTab } from '@codemirror/commands';
   import * as Go from '../../wailsjs/go/main/App';
-  import { repo } from '../lib/repo.svelte';
+  import { repo, touches } from '../lib/repo.svelte';
   import { cmBase } from '../lib/cm';
   import { toast } from '../lib/menu.svelte';
   import Icon from '../lib/Icon.svelte';
@@ -12,18 +12,19 @@
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
-  let saved = '';
+  let saved: import('@codemirror/state').Text | undefined;
   let dirty = $state(false);
   let error = $state('');
 
   async function save() {
     if (!view || !dirty) return true;
-    const text = view.state.doc.toString();
+    const doc = view.state.doc;
+    const text = doc.toString();
     try {
       await Go.WriteFile(dir, rel, text);
-      saved = text;
-      dirty = false;
-      repo(dir).schedule();
+      saved = doc;
+      dirty = !!view && !view.state.doc.eq(doc);
+      repo(dir).schedule(false, false, [rel]);
     } catch (e) {
       toast(String(e));
     }
@@ -33,20 +34,20 @@
   async function reload() {
     if (!view || dirty) return;
     const text = await Go.ReadFile(dir, rel).catch(() => null);
-    if (text === null || text === saved || dirty || !view) return;
-    saved = text;
+    if (text === null || text === saved?.toString() || dirty || !view) return;
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    saved = view.state.doc;
     dirty = false;
   }
 
   $effect(() => {
     const [d, r] = [dir, rel];
+    const owner = untrack(() => repo(d));
     let dead = false;
     (async () => {
       try {
         const [text, base] = await Promise.all([Go.ReadFile(d, r), cmBase(r)]);
         if (dead) return;
-        saved = text;
         view = new EditorView({
           doc: text,
           parent: host,
@@ -56,9 +57,10 @@
             highlightActiveLine(),
             highlightActiveLineGutter(),
             ...base,
-            EditorView.updateListener.of((u) => u.docChanged && (dirty = u.state.doc.toString() !== saved)),
+            EditorView.updateListener.of((u) => u.docChanged && (dirty = !saved || !u.state.doc.eq(saved))),
           ],
         });
+        saved = view.state.doc;
         const ln = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
         view.dispatch({ selection: { anchor: ln.from }, effects: EditorView.scrollIntoView(ln.from, { y: 'center' }) });
         view.focus();
@@ -69,15 +71,15 @@
     return () => {
       dead = true;
       // Like IntelliJ: leaving the tab saves, so switching or closing never drops edits.
-      if (view && dirty) Go.WriteFile(d, r, view.state.doc.toString()).then(() => repo(d).schedule(), (e) => toast(String(e)));
+      if (view && dirty) Go.WriteFile(d, r, view.state.doc.toString()).then(() => owner.schedule(false, false, [r]), (e) => toast(String(e)));
       view?.destroy();
       view = undefined;
     };
   });
 
   $effect(() => {
-    repo(dir).snap;
-    untrack(reload);
+    const path = rel;
+    return repo(dir).onFiles((_refs, _index, paths) => { if (touches(path, paths)) untrack(reload); });
   });
 
   function external() {
