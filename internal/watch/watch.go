@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +21,13 @@ type Watcher struct {
 	path     string
 	skip     map[string]bool
 	gitDirs  []string
-	gitHit   bool
+	cancel   chan struct{}
 	gen      int
-	onChange func(path string, git bool)
+	onChange func(path string, refs, index bool, paths []string)
 }
 
 // New calls onChange with git=true when the change touched the git dir (HEAD, index, refs).
-func New(onChange func(path string, git bool)) (*Watcher, error) {
+func New(onChange func(path string, refs, index bool, paths []string)) (*Watcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -39,30 +40,46 @@ func New(onChange func(path string, git bool)) (*Watcher, error) {
 // Set switches to dir. Ignored dirs are skipped.
 // ponytail: one fsnotify watch per dir; huge trees can hit OS limits (inotify), focus refresh still works.
 func (wt *Watcher) Set(dir string) {
-	wt.install(dir, wt.selectPath(dir))
+	wt.setup(dir, wt.reserve(dir))
 }
 
 func (wt *Watcher) Switch(dir string) {
-	gen := wt.selectPath(dir)
-	go wt.install(dir, gen)
+	cancel := wt.reserve(dir)
+	go wt.setup(dir, cancel)
 }
 
-func (wt *Watcher) selectPath(dir string) int {
+func (wt *Watcher) reserve(dir string) chan struct{} {
 	wt.mu.Lock()
-	wt.gen++
 	defer wt.mu.Unlock()
+	if wt.cancel != nil {
+		close(wt.cancel)
+	}
+	wt.gen++
+	wt.cancel = make(chan struct{})
 	wt.path = dir
-	wt.gitHit = false
-	return wt.gen
+	return wt.cancel
 }
 
-func (wt *Watcher) install(dir string, gen int) {
-	// Slow work (git spawns, tree walk) happens unlocked; a newer Set makes this one bail out.
+func (wt *Watcher) setup(dir string, cancel chan struct{}) {
+	cancelled := func() bool {
+		select {
+		case <-cancel:
+			return true
+		default:
+			return false
+		}
+	}
+	if cancelled() {
+		return
+	}
 	var dirs, gitDirs []string
 	var skip map[string]bool
 	if dir != "" {
 		skip = ignoredDirs(dir)
 		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if cancelled() {
+				return fs.SkipAll
+			}
 			if err != nil || !d.IsDir() {
 				return nil
 			}
@@ -72,12 +89,21 @@ func (wt *Watcher) install(dir string, gen int) {
 			dirs = append(dirs, p)
 			return nil
 		})
+		if cancelled() {
+			return
+		}
 		if out, err := git.Run(dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"); err == nil {
 			for l := range strings.Lines(out) {
 				g := filepath.Clean(strings.TrimSpace(l))
+				if slices.Contains(gitDirs, g) {
+					continue
+				}
 				gitDirs = append(gitDirs, g)
 				dirs = append(dirs, g, filepath.Join(g, "logs"))
 				_ = filepath.WalkDir(filepath.Join(g, "refs"), func(p string, d fs.DirEntry, err error) error {
+					if cancelled() {
+						return fs.SkipAll
+					}
 					if err == nil && d.IsDir() {
 						dirs = append(dirs, p)
 					}
@@ -88,17 +114,24 @@ func (wt *Watcher) install(dir string, gen int) {
 	}
 
 	wt.mu.Lock()
-	defer wt.mu.Unlock()
-	if gen != wt.gen {
+	if cancelled() {
+		wt.mu.Unlock()
 		return
 	}
 	for _, p := range wt.w.WatchList() {
 		_ = wt.w.Remove(p)
 	}
 	wt.skip, wt.gitDirs = skip, gitDirs
+	wt.mu.Unlock()
 	for _, p := range dirs {
+		wt.mu.Lock()
+		if cancelled() {
+			wt.mu.Unlock()
+			return
+		}
 		// fsnotify allocates 64 KB per watched dir on Windows by default; 4 KB is plenty for a debounced refresh.
 		_ = wt.w.AddWith(p, fsnotify.WithBufferSize(4096))
+		wt.mu.Unlock()
 	}
 }
 
@@ -114,9 +147,30 @@ func ignoredDirs(dir string) map[string]bool {
 }
 
 func (wt *Watcher) loop() {
-	var timer *time.Timer
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
+	var generation int
+	var refs, index, all bool
+	paths := map[string]bool{}
 	for {
 		select {
+		case <-timer.C:
+			wt.mu.Lock()
+			dir, current := wt.path, wt.gen
+			wt.mu.Unlock()
+			if generation == current && dir != "" {
+				var changed []string
+				if !all {
+					changed = make([]string, 0, len(paths))
+					for p := range paths {
+						changed = append(changed, p)
+					}
+				}
+				wt.onChange(dir, refs, index, changed)
+			}
+			clear(paths)
+			refs, index, all = false, false, false
 		case ev, ok := <-wt.w.Events:
 			if !ok {
 				return
@@ -165,35 +219,47 @@ func (wt *Watcher) loop() {
 				wt.mu.Unlock()
 				continue
 			}
-			wt.gitHit = wt.gitHit || inGit
-			wt.mu.Unlock()
-			if timer != nil {
-				timer.Stop()
+			if generation != wt.gen {
+				clear(paths)
+				refs, index, all, generation = false, false, false, wt.gen
 			}
-			timer = time.AfterFunc(250*time.Millisecond, func() {
-				wt.mu.Lock()
-				if gen != wt.gen {
-					wt.mu.Unlock()
-					return
+			meta := false
+			for _, g := range wt.gitDirs {
+				if name == g || strings.HasPrefix(name, g+string(filepath.Separator)) {
+					meta = true
+					if !strings.HasSuffix(name, ".lock") {
+						if name == filepath.Join(g, "index") {
+							index = true
+						} else {
+							refs = true
+						}
+					}
+					break
 				}
-				p, g := wt.path, wt.gitHit
-				wt.gitHit = false
-				wt.mu.Unlock()
-				if p != "" {
-					wt.onChange(p, g)
+			}
+			if !meta && !all {
+				if rel, err := filepath.Rel(wt.path, name); err == nil && filepath.IsLocal(rel) {
+					paths[filepath.ToSlash(rel)] = true
+					all = len(paths) >= 256
 				}
-			})
+			}
+			wt.mu.Unlock()
+			if refs || index || all || len(paths) > 0 {
+				timer.Reset(250 * time.Millisecond)
+			}
 		case _, ok := <-wt.w.Errors:
 			if !ok {
 				return
 			}
 			wt.mu.Lock()
-			dir, gen := wt.path, wt.gen
+			generation = wt.gen
+			dir, cancel := wt.path, wt.cancel
 			wt.mu.Unlock()
 			if dir != "" {
-				wt.install(dir, gen)
-				wt.onChange(dir, true)
+				wt.setup(dir, cancel)
 			}
+			refs, index, all = true, true, true
+			timer.Reset(250 * time.Millisecond)
 		}
 	}
 }

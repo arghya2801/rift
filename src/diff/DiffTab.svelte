@@ -10,7 +10,7 @@
   import * as Go from '../../wailsjs/go/main/App';
   import type { git } from '../../wailsjs/go/models';
   import { openTab, fileTab, type EditorTab } from '../lib/tabs.svelte';
-  import { repo } from '../lib/repo.svelte';
+  import { repo, touches } from '../lib/repo.svelte';
   import { toast } from '../lib/menu.svelte';
   import { cmBase } from '../lib/cm';
   import { partials } from '../changes/partial.svelte';
@@ -84,7 +84,7 @@
     const pending = (indexWrites.get(key) ?? Promise.resolve()).then(write).catch((e) => toast(String(e)));
     indexWrites.set(key, pending);
     pending.finally(() => {
-      if (indexWrites.get(key) === pending) { indexWrites.delete(key); current.schedule(true); }
+      if (indexWrites.get(key) === pending) { indexWrites.delete(key); current.schedule(false, true, [path]); }
     });
   }
 
@@ -297,9 +297,11 @@
   }
 
   $effect(() => {
-    r.gitRev;
-    r.snap;
+    const source = src, path = tab.path;
     untrack(reload);
+    if (source !== 'commit') return r.onFiles((refs, index, paths) => {
+      if (refs || (source !== 'head' && index) || (source !== 'staged' && touches(path, paths))) reload();
+    });
   });
 
   // Bumping seq makes a load still in flight stop instead of building into a closed tab.

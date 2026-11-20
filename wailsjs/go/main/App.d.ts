@@ -55,6 +55,8 @@ export function ListDir(arg1:string,arg2:string):Promise<Array<main.Entry>>;
 
 export function Log(arg1:string,arg2:number):Promise<Array<git.Row>>;
 
+export function LogPage(arg1:string,arg2:number,arg3:number,arg4:string,arg5:Array<string>):Promise<git.Page>;
+
 export function Merge(arg1:string,arg2:string):Promise<void>;
 
 export function OpAbort(arg1:string):Promise<void>;
@@ -69,7 +71,7 @@ export function OpenExternal(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function OpenInATC(arg1:string):Promise<void>;
 
-export function Overview():Promise<Array<main.Overview>>;
+export function Overview(arg1:Array<main.Repo>):Promise<Array<main.Overview>>;
 
 export function PickFolder():Promise<string>;
 

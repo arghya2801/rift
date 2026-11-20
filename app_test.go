@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,6 +226,31 @@ func TestInitialResolvesWorktreeRoot(t *testing.T) {
 		if got := a.Initial(); got != "" {
 			t.Fatalf("%v: %q", args, got)
 		}
+	}
+}
+
+func TestDashboardSendsCountsWithoutPaths(t *testing.T) {
+	dir, run := repoDir(t)
+	commitFile(t, dir, run, "tracked", "original", "initial")
+	for i := range 1000 {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("changed-%04d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", "changed-0000")
+	cards := (&App{}).Overview([]Repo{{Name: "dashboard-test", Worktrees: []git.Worktree{{Path: dir}}}})
+	if len(cards) != 1 || cards[0].Changed != 1000 || cards[0].Staged != 1 || cards[0].Error != "" {
+		t.Fatalf("unexpected summary: %+v", cards)
+	}
+	s, err := git.GetStatus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBytes, _ := json.Marshal(cards[0])
+	oldBytes, _ := json.Marshal(s)
+	t.Logf("1000 changed paths: old status alone %d bytes, new complete card %d bytes", len(oldBytes), len(newBytes))
+	if strings.Contains(string(newBytes), "changed-0000") {
+		t.Fatal("dashboard sent path data")
 	}
 }
 

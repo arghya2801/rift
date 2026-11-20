@@ -5,6 +5,7 @@
   import { repo } from '../lib/repo.svelte';
   import { openTab, fileTab, diffTab, mergeTab } from '../lib/tabs.svelte';
   import { openMenu, toast } from '../lib/menu.svelte';
+  import PagedRows from '../lib/PagedRows.svelte';
   import Icon from '../lib/Icon.svelte';
 
   let { dir, collapse = 0, reloadKey = 0 }: { dir: string; collapse?: number; reloadKey?: number } = $props();
@@ -70,6 +71,18 @@
     else openTab(dir, fileTab(rel), true);
   }
 
+  const entries = $derived.by(() => {
+    const rows: { e: main.Entry; rel: string; depth: number }[] = [];
+    function append(base: string, depth: number) {
+      for (const e of children[base] ?? []) {
+        const rel = join(base, e.name);
+        rows.push({ e, rel, depth });
+        if (e.isDir && open[rel]) append(rel, depth + 1);
+      }
+    }
+    append('', 0);
+    return rows;
+  });
   const join = (base: string, name: string) => (base ? `${base}/${name}` : name);
 
   $effect(() => {
@@ -96,35 +109,30 @@
   });
 </script>
 
-{#snippet level(base: string, depth: number)}
-  {#each children[base] ?? [] as e (e.name)}
-    {@const rel = join(base, e.name)}
-    <div
-      class="item"
-      class:sel={selected === rel}
-      style="padding-left:{4 + depth * 16}px"
-      role="treeitem"
-      aria-selected={selected === rel}
-      aria-expanded={e.isDir ? !!open[rel] : undefined}
-      tabindex="0"
-      title={rel}
-      onclick={() => activate(rel, e.isDir)}
-      ondblclick={() => !e.isDir && openTab(dir, fileTab(rel))}
-      onkeydown={(k) => k.key === 'Enter' && activate(rel, e.isDir)}
-      oncontextmenu={(m) => menu(m, rel, e.isDir)}
-    >
-      <span class="chev">{#if e.isDir}<Icon name={open[rel] ? 'chevron-down' : 'chevron-right'} size={14} />{/if}</span>
-      <span class="ico" class:folder={e.isDir}><Icon name={e.isDir ? (open[rel] ? 'folder-open' : 'folder') : 'file'} size={15} /></span>
-      <span class="name {e.isDir ? (dirty.has(rel) ? 'vcs-M' : '') : status.has(rel) ? `vcs-${status.get(rel)}` : ''}">{e.name}</span>
-    </div>
-    {#if e.isDir && open[rel]}
-      {@render level(rel, depth + 1)}
-    {/if}
-  {/each}
-{/snippet}
-
 <div class="tree" role="tree">
-  {@render level('', 0)}
+  <PagedRows items={entries} keyFor={(item) => item.rel}>
+    {#snippet children({ e, rel, depth })}
+      <div
+        class="item"
+        class:sel={selected === rel}
+        style="padding-left:{4 + depth * 16}px"
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-selected={selected === rel}
+        aria-expanded={e.isDir ? !!open[rel] : undefined}
+        tabindex="0"
+        title={rel}
+        onclick={() => activate(rel, e.isDir)}
+        ondblclick={() => !e.isDir && openTab(dir, fileTab(rel))}
+        onkeydown={(k) => k.key === 'Enter' && activate(rel, e.isDir)}
+        oncontextmenu={(m) => menu(m, rel, e.isDir)}
+      >
+        <span class="chev">{#if e.isDir}<Icon name={open[rel] ? 'chevron-down' : 'chevron-right'} size={14} />{/if}</span>
+        <span class="ico" class:folder={e.isDir}><Icon name={e.isDir ? (open[rel] ? 'folder-open' : 'folder') : 'file'} size={15} /></span>
+        <span class="name {e.isDir ? (dirty.has(rel) ? 'vcs-M' : '') : status.has(rel) ? `vcs-${status.get(rel)}` : ''}">{e.name}</span>
+      </div>
+    {/snippet}
+  </PagedRows>
 </div>
 
 <style>

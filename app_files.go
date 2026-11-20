@@ -15,8 +15,9 @@ import (
 )
 
 type Entry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
+	Name     string `json:"name"`
+	IsDir    bool   `json:"isDir"`
+	sortName string
 }
 
 func inside(dir, rel string) (string, error) {
@@ -48,13 +49,16 @@ func (a *App) ListDir(dir, rel string) ([]Entry, error) {
 		if d.Name() == ".git" {
 			continue
 		}
-		out = append(out, Entry{Name: d.Name(), IsDir: d.IsDir()})
+		out = append(out, Entry{Name: d.Name(), IsDir: d.IsDir(), sortName: strings.ToLower(d.Name())})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].IsDir != out[j].IsDir {
 			return out[i].IsDir
 		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		if out[i].sortName == out[j].sortName {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].sortName < out[j].sortName
 	})
 	return out, nil
 }

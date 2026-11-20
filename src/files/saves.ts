@@ -1,9 +1,32 @@
+import { Text } from '@codemirror/state';
 import * as Go from '../../wailsjs/go/main/App';
 
 export class FileDraft {
   pending?: Promise<void>;
   users = 0;
-  constructor(readonly dir: string, readonly path: string, public saved: string, public text = saved) {}
+  private doc?: Text;
+  private baseline?: Text;
+  private baselineText?: string;
+  private eol = '\n';
+  constructor(readonly dir: string, readonly path: string, public saved: string, private value = saved) {}
+
+  get text() { return this.doc ? this.doc.sliceString(0, this.doc.length, this.eol) : this.value; }
+  set text(value: string) { this.doc = undefined; this.value = value; }
+
+  rememberSavedDoc(doc: Text) {
+    this.baseline = doc;
+    this.baselineText = this.saved;
+  }
+
+  edit(doc: Text, eol: string) { this.doc = doc; this.eol = eol; }
+  get dirty() {
+    if (!this.doc) return this.value !== this.saved;
+    if (!this.baseline || this.baselineText !== this.saved) {
+      this.baseline = Text.of(this.saved.split(/\r?\n/));
+      this.baselineText = this.saved;
+    }
+    return !this.doc.eq(this.baseline);
+  }
 
   save(): Promise<void> {
     if (!this.pending) this.pending = this.flush().finally(() => { this.pending = undefined; });
@@ -11,10 +34,12 @@ export class FileDraft {
   }
 
   private async flush() {
-    while (this.text !== this.saved) {
+    while (this.dirty) {
+      const written = this.doc;
       const text = this.text;
       await Go.SaveFile(this.dir, this.path, text, this.saved);
       this.saved = text;
+      if (written) this.rememberSavedDoc(written);
     }
   }
 }
@@ -36,5 +61,5 @@ export async function openDraft(dir: string, path: string) {
 export function releaseDraft(draft: FileDraft) {
   const id = key(draft.dir, draft.path);
   draft.users--;
-  if (draft.users === 0 && drafts.get(id) === draft && draft.text === draft.saved) drafts.delete(id);
+  if (draft.users === 0 && drafts.get(id) === draft && !draft.dirty) drafts.delete(id);
 }

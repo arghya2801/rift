@@ -3,6 +3,7 @@
   import type { git } from '../../wailsjs/go/models';
   import { openTab, commitDiffTab } from '../lib/tabs.svelte';
   import { toast } from '../lib/menu.svelte';
+  import PagedRows from '../lib/PagedRows.svelte';
   import Icon from '../lib/Icon.svelte';
 
   let { dir, row, onparent }: { dir: string; row: git.Row; onparent: (hash: string) => void } = $props();
@@ -37,6 +38,15 @@
     return [...m];
   });
 
+  type DetailRow = { d: string; count: number; f?: git.ChangedFile };
+  const entries = $derived.by(() => {
+    const rows: DetailRow[] = [];
+    for (const [d, list] of groups) {
+      if (d) rows.push({ d, count: list.length });
+      for (const f of list) rows.push({ d, count: 0, f });
+    }
+    return rows;
+  });
   const leaf = (p: string) => p.slice(p.lastIndexOf('/') + 1);
   const date = (t: number) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   const body = $derived(message.split('\n').slice(1).join('\n').trim());
@@ -45,18 +55,21 @@
 <div class="details">
   <div class="files">
     <div class="caption dim">{files.length} file{files.length === 1 ? '' : 's'} changed</div>
-    {#each groups as [d, list] (d)}
-      {#if d}
-        <div class="row dir"><Icon name="folder" size={14} /><span class="name">{d}</span><span class="dim">{list.length}</span></div>
-      {/if}
-      {#each list as f (f.path)}
-        <button class="row file" style="padding-left:{d ? 28 : 10}px" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path} onclick={() => openTab(dir, commitDiffTab(row.hash, f.path, f.oldPath), true)}>
-          <Icon name="file" size={14} />
-          <span class="name vcs-{f.status}">{leaf(f.path)}</span>
-          {#if f.oldPath}<span class="dim small">from {leaf(f.oldPath)}</span>{/if}
-        </button>
-      {/each}
-    {/each}
+    {#key row.hash}
+      <PagedRows items={entries} keyFor={({ d, f }) => f ? 'file:' + f.path : 'dir:' + d}>
+        {#snippet children({ d, count, f })}
+          {#if !f}
+            <div class="row dir"><Icon name="folder" size={14} /><span class="name">{d}</span><span class="dim">{count}</span></div>
+          {:else}
+            <button class="row file" style="padding-left:{d ? 28 : 10}px" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path} onclick={() => openTab(dir, commitDiffTab(row.hash, f.path, f.oldPath), true)}>
+              <Icon name="file" size={14} />
+              <span class="name vcs-{f.status}">{leaf(f.path)}</span>
+              {#if f.oldPath}<span class="dim small">from {leaf(f.oldPath)}</span>{/if}
+            </button>
+          {/if}
+        {/snippet}
+      </PagedRows>
+    {/key}
   </div>
   <div class="meta">
     <div class="subject">{row.subject}</div>

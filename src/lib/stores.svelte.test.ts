@@ -3,7 +3,7 @@ import { flushSync } from 'svelte';
 import { openTab, closeTab, focusTab, tabsOf, activeTab, diffTab, fileTab } from './tabs.svelte';
 import { ask, sure, dialog, toast, toasts } from './menu.svelte';
 import { repo, activate } from './repo.svelte';
-import { app, uiOf, select } from '../shell/app.svelte';
+import { app, uiOf, select, refreshRepos } from '../shell/app.svelte';
 import { partials } from '../changes/partial.svelte';
 import { fuzzyScore } from './fuzzy';
 import { findTheme } from './themes';
@@ -130,8 +130,24 @@ describe('repo store', () => {
     expect(r.gitRev).toBe(rev);
     r.schedule(true);
     await tick();
-    expect(r.gitRev).toBe(rev + 1);
+    expect(r.gitRev).toBe(rev);
     expect(Go.Snapshot).toHaveBeenLastCalledWith('/refs', true);
+  });
+
+  it('coalesces staging with its watcher event and reloads history only when a ref moves', async () => {
+    const r = repo('/stage-count');
+    await tick();
+    Go.Snapshot.mockClear();
+    const rev = r.gitRev;
+    await r.run(Promise.resolve(), false);
+    emit('repo://changed', '/stage-count', false, true, []);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(Go.Snapshot.mock.calls).toEqual([['/stage-count', false]]);
+    expect(r.gitRev).toBe(rev);
+    Go.Snapshot.mockResolvedValueOnce({ ...fx.snapshot(), refs: fx.refs.map((ref) => ({ ...ref, hash: 'f'.repeat(40) })) });
+    r.schedule(true);
+    await tick();
+    expect(r.gitRev).toBe(rev + 1);
   });
 
   it('keeps the last good snapshot across a failed status refresh', async () => {
@@ -157,12 +173,15 @@ describe('repo store', () => {
     const rev = r.gitRev;
     emit('repo://changed', '/routed', true);
     await tick();
-    expect(r.gitRev).toBe(rev + 1);
+    expect(r.gitRev).toBe(rev);
   });
 
-  it('activate watches the worktree once', () => {
+  it('loads a new worktree once and watches it once', async () => {
+    Go.Snapshot.mockClear();
     Go.Watch.mockClear();
     activate('/w1');
+    await tick();
+    expect(Go.Snapshot).toHaveBeenCalledTimes(1);
     activate('/w1');
     expect(Go.Watch).toHaveBeenCalledTimes(1);
   });
@@ -178,6 +197,20 @@ describe('shell state', () => {
     expect(app.current).toBe(null);
   });
 
+  it('drops removed worktree state on inventory refresh', async () => {
+    Go.Repos.mockResolvedValueOnce(fx.repos);
+    await refreshRepos();
+    select(fx.worktrees[1]);
+    openTab(fx.WT, fileTab('old.txt'));
+    partials[fx.WT] = { 'old.txt': { text: 'partial', base: 'old' } };
+    Go.Repos.mockResolvedValueOnce([]);
+    await refreshRepos();
+    expect(app.current).toBe(null);
+    expect(tabsOf(fx.WT)).toHaveLength(0);
+    expect(partials[fx.WT]).toBeUndefined();
+    expect(app.ui[fx.WT]).toBeUndefined();
+  });
+
   it('partials is a plain reactive record', () => {
     partials['/p'] = { 'a.ts': { text: 'x', base: '' } };
     expect(partials['/p']['a.ts'].text).toBe('x');
@@ -190,9 +223,9 @@ describe('fuzzy and theme', () => {
     expect(fuzzyScore('Git: Fetch', 'zz')).toBe(null);
   });
 
-  it('applyPalette writes CSS variables', () => {
+  it('applyPalette writes CSS variables', async () => {
     const el = document.createElement('div');
-    applyPalette(findTheme('Dracula'), el);
+    applyPalette(await findTheme('Dracula'), el);
     expect(el.style.getPropertyValue('--bg')).not.toBe('');
   });
 });

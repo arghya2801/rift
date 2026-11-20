@@ -6,12 +6,27 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 export class Repo {
   dir: string;
   snap = $state<main.Snapshot | null>(null);
-  // Bumped when HEAD/refs/index change; the log reloads only on this.
+  // Only a changed history tip or decoration invalidates the log.
   gitRev = $state(0);
   error = $state('');
+  #disposed = false;
   #inflight = false;
   #again = false;
   #wantFull = true;
+  #pending?: ReturnType<typeof setTimeout>;
+  #pendingFull = false;
+  #listeners = new Set<(refs: boolean, index: boolean, paths?: string[] | null) => void>();
+
+  onFiles(listener: (refs: boolean, index: boolean, paths?: string[] | null) => void) {
+    this.#listeners.add(listener);
+    return () => { this.#listeners.delete(listener); };
+  }
+
+  dispose() {
+    this.#disposed = true;
+    clearTimeout(this.#pending);
+    this.#listeners.clear();
+  }
 
   constructor(dir: string) {
     this.dir = dir;
@@ -37,6 +52,7 @@ export class Repo {
   }
 
   async refresh() {
+    if (this.#disposed) return;
     if (this.#inflight) {
       this.#again = true;
       return;
@@ -49,6 +65,13 @@ export class Repo {
       if (!full && this.snap) {
         s.refs = this.snap.refs;
         s.stashes = this.snap.stashes;
+      }
+      if (this.snap && !s.error) {
+        const previous = this.snap;
+        const moved = previous.status.head !== s.status.head || previous.status.branch !== s.status.branch;
+        const refsChanged = full && (s.refs.length !== previous.refs.length || s.refs.some((ref, i) =>
+          ref.full !== previous.refs[i].full || ref.hash !== previous.refs[i].hash));
+        if (moved || refsChanged) this.gitRev++;
       }
       this.error = s.error ?? '';
       if (this.error) this.#wantFull = true;
@@ -66,22 +89,30 @@ export class Repo {
   }
 
   // The Go watcher already debounces; overlapping calls coalesce in refresh().
-  schedule(git = false) {
-    if (git) {
-      this.gitRev++;
-      this.#wantFull = true;
+  schedule(refs = false, index = true, paths?: string[] | null) {
+    // A watcher event also satisfies a mutation's pending status refresh.
+    if (this.#pending !== undefined) {
+      clearTimeout(this.#pending);
+      this.#pending = undefined;
+      refs ||= this.#pendingFull;
+      index = true;
+      this.#pendingFull = false;
     }
+    if (refs) this.#wantFull = true;
+    for (const listener of this.#listeners) listener(refs, index, paths);
     this.refresh();
   }
 
-  // Run a mutating call, then refresh state (and the log) once. Throws the git error.
-  async run<T>(p: Promise<T>): Promise<T> {
+  async run<T>(p: Promise<T>, refs = true): Promise<T> {
     try {
       return await p;
     } finally {
-      this.schedule(true);
+      this.#pendingFull ||= refs;
+      clearTimeout(this.#pending);
+      if (!this.#disposed) this.#pending = setTimeout(() => this.schedule(this.#pendingFull), 320);
     }
   }
+
 }
 
 const repos = new Map<string, Repo>();
@@ -99,17 +130,33 @@ export function repo(dir: string): Repo {
 
 // The watched worktree; only one is watched at a time.
 export function activate(dir: string): Repo {
+  const cached = repos.has(dir);
   const r = repo(dir);
-  if (active !== r) {
-    active = r;
-    Go.Watch(dir);
-  }
-  // Refresh even when returning to the same worktree: nothing was watched while away from it.
-  r.schedule(true);
+  if (active === r) return r;
+  active = r;
+  Go.Watch(dir);
+  // A cached worktree may have changed while another worktree was watched.
+  if (cached) r.schedule(true);
   return r;
 }
 
-EventsOn('repo://changed', (p: string, git: boolean) => repos.get(p)?.schedule(git));
+export function deactivate() {
+  if (active) Go.Watch('');
+  active = null;
+}
+
+export function forgetRepo(dir: string) {
+  const r = repos.get(dir);
+  if (r && r === active) deactivate();
+  r?.dispose();
+  repos.delete(dir);
+}
+
+export function touches(path: string, paths?: string[] | null) {
+  return !paths || paths.some((p) => p === '.' || p === path || path.startsWith(p + '/'));
+}
+
+EventsOn('repo://changed', (p: string, refs: boolean, index: boolean, paths?: string[]) => repos.get(p)?.schedule(refs, index, paths));
 // Focus refresh catches changes the watcher missed, at most every 3 s.
 let lastFocus = 0;
 window.addEventListener('focus', () => {

@@ -54,7 +54,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('notes.txt')).toBeTruthy());
     await fireEvent.click(screen.getByTitle('Git (Alt+9)'));
     await waitFor(() => expect(screen.getByText('Add feature')).toBeTruthy());
-    expect(Go.Log).toHaveBeenCalled();
+    expect(Go.LogPage).toHaveBeenCalled();
   });
 
   it('clicking a changed file opens a diff tab', async () => {

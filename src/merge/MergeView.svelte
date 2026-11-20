@@ -12,7 +12,7 @@
   import { cmBase } from '../lib/cm';
   import { sure, toast } from '../lib/menu.svelte';
   import Icon from '../lib/Icon.svelte';
-  import { parse, render, hasMarkers, markerStarts, type Segment } from './markers';
+  import { parse, render, hasMarkers, markerStarts, markerCount, markerDelta, type Segment } from './markers';
 
   let { dir, path, ondone }: { dir: string; path: string; ondone: () => void } = $props();
 
@@ -23,14 +23,13 @@
   let segments = $state<Segment[]>([]);
   let choices = $state<Choice[]>([]);
   let edited = $state(false);
-  let unresolved = $state(true);
+  let markers = $state(1);
+  const unresolved = $derived(markers > 0);
   let remaining = $state(0);
   let eol = '\n';
   let size = 7;
-  function updateRemaining(text: string) {
-    unresolved = hasMarkers(text, size);
-    remaining = markerStarts(text, size).length;
-  }
+  const isMarker = (line: string) => hasMarkers(line, size);
+  const isStart = (line: string) => line === '<'.repeat(size) + ' ours';
   let stages = $state('');
   let error = $state('');
   let result = $state.raw<EditorView>();
@@ -62,7 +61,6 @@
     syncing = true;
     result.dispatch({ changes: { from: 0, to: result.state.doc.length, insert: text } });
     syncing = false;
-    updateRemaining(text);
   }
 
   function choose(i: number, c: Choice) {
@@ -132,13 +130,15 @@
             ...base,
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return;
-              updateRemaining(u.state.doc.toString());
+              markers += markerDelta(u.startState.doc, u.state.doc, u.changes, isMarker);
+              remaining += markerDelta(u.startState.doc, u.state.doc, u.changes, isStart);
               if (!syncing) edited = true;
             }),
           ],
         });
         views.push(result);
-        updateRemaining(result.state.doc.toString());
+        markers = markerCount(result.state.doc, isMarker);
+        remaining = markerCount(result.state.doc, isStart);
       } catch (e) {
         error = String(e);
       }

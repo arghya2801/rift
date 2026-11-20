@@ -127,9 +127,14 @@ func blob(dir, spec string) (string, error) {
 		return "", err
 	}
 	b, readErr := io.ReadAll(io.LimitReader(out, MaxBlob+1))
-	_, drainErr := io.Copy(io.Discard, out)
+	if len(b) > MaxBlob {
+		_ = out.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return "\x00", nil
+	}
 	waitErr := cmd.Wait()
-	if err := errors.Join(readErr, drainErr); err != nil {
+	if err := readErr; err != nil {
 		return "", err
 	}
 	if waitErr != nil {
@@ -140,9 +145,6 @@ func blob(dir, spec string) (string, error) {
 			return "", nil
 		}
 		return "", fmt.Errorf("read %s: %w: %s", spec, waitErr, strings.TrimSpace(stderr.String()))
-	}
-	if len(b) > MaxBlob {
-		return "\x00", nil
 	}
 	return string(b), nil
 }

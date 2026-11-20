@@ -78,20 +78,26 @@ func AddToGitignore(dir, path string) error {
 	if strings.ContainsAny(path, "\r\n") {
 		return errors.New("filename cannot be represented by one ignore rule")
 	}
-	b, err := os.ReadFile(name)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	escape := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", " ", "\\ ")
-	line := "/" + escape.Replace(strings.TrimPrefix(path, "/"))
-	if len(b) > 0 && b[len(b)-1] != '\n' {
-		line = "\n" + line
-	}
-	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	escape := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", " ", "\\ ")
+	line := "/" + escape.Replace(strings.TrimPrefix(path, "/"))
+	if n := info.Size(); n > 0 {
+		var tail [1]byte
+		if _, err := f.ReadAt(tail[:], n-1); err != nil {
+			return err
+		}
+		if tail[0] != '\n' {
+			line = "\n" + line
+		}
+	}
 	_, err = f.WriteString(line + "\n")
 	return err
 }

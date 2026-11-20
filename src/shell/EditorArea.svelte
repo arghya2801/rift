@@ -1,12 +1,21 @@
+<script lang="ts" module>
+  function lazy<T>(load: () => Promise<{ default: T }>) {
+    let pending: Promise<T> | undefined;
+    return () => pending ??= load().then((m) => m.default).catch((err) => {
+      pending = undefined;
+      throw err;
+    });
+  }
+  // CodeMirror-heavy views load on first use, keeping startup parse small.
+  const DiffTab = lazy(() => import('../diff/DiffTab.svelte'));
+  const Editor = lazy(() => import('../files/Editor.svelte'));
+  const MergeView = lazy(() => import('../merge/MergeView.svelte'));
+  const RebaseView = lazy(() => import('../rebase/RebaseView.svelte'));
+</script>
+
 <script lang="ts">
   import Icon from '../lib/Icon.svelte';
   import { tabsOf, activeTab, focusTab, closeTab, previewOf, pinTab, type EditorTab } from '../lib/tabs.svelte';
-  // CodeMirror-heavy views load on first use, keeping startup parse small.
-  const DiffTab = import('../diff/DiffTab.svelte').then((m) => m.default);
-  const Editor = import('../files/Editor.svelte').then((m) => m.default);
-  const MergeView = import('../merge/MergeView.svelte').then((m) => m.default);
-  const RebaseView = import('../rebase/RebaseView.svelte').then((m) => m.default);
-
   let { dir }: { dir: string } = $props();
 
   const tabs = $derived(tabsOf(dir));
@@ -43,16 +52,16 @@
       {#key active.id}
         {#if active.kind === 'diff'}
           {@const t = active}
-          {#await DiffTab then C}<C {dir} tab={t} />{/await}
+          {#await DiffTab() then C}<C {dir} tab={t} />{/await}
         {:else if active.kind === 'file'}
           {@const t = active}
-          {#await Editor then C}<C {dir} rel={t.path} line={t.line} />{/await}
+          {#await Editor() then C}<C {dir} rel={t.path} line={t.line} />{/await}
         {:else if active.kind === 'merge'}
           {@const t = active}
-          {#await MergeView then C}<C {dir} path={t.path} ondone={() => closeTab(dir, t.id)} />{/await}
+          {#await MergeView() then C}<C {dir} path={t.path} ondone={() => closeTab(dir, t.id)} />{/await}
         {:else if active.kind === 'rebase'}
           {@const t = active}
-          {#await RebaseView then C}<C {dir} base={t.base} ondone={() => closeTab(dir, t.id)} />{/await}
+          {#await RebaseView() then C}<C {dir} base={t.base} ondone={() => closeTab(dir, t.id)} />{/await}
         {/if}
       {/key}
     {:else}

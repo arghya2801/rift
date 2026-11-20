@@ -1,3 +1,5 @@
+import type { Text, ChangeSet } from '@codemirror/state';
+
 export type Segment = { type: 'text'; text: string } | { type: 'conflict'; ours: string; base: string; theirs: string };
 
 export function parse(src: string, size = 7): Segment[] {
@@ -46,4 +48,27 @@ export function markerStarts(text: string, size = 7): number[] {
 
 export function hasMarkers(text: string, size = 7): boolean {
   return new RegExp('^(?:<{' + size + '} ours|[|]{' + size + '} base|={' + size + '}|>{' + size + '} theirs)\\r?$', 'm').test(text);
+}
+
+function countLines(doc: Text, first: number, last: number, match: (line: string) => boolean) {
+  let count = 0;
+  for (const line of doc.iterLines(first, last + 1)) if (match(line)) count++;
+  return count;
+}
+
+export const markerCount = (doc: Text, match: (line: string) => boolean = hasMarkers) => countLines(doc, 1, doc.lines, match);
+
+// Only inspect the old and new lines that intersect an edit, once per side.
+export function markerDelta(before: Text, after: Text, changes: ChangeSet, match: (line: string) => boolean = hasMarkers) {
+  let delta = 0, lastA = 0, lastB = 0;
+  changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+    const endA = before.lineAt(toA).number, endB = after.lineAt(toB).number;
+    const startA = Math.max(lastA + 1, before.lineAt(fromA).number);
+    const startB = Math.max(lastB + 1, after.lineAt(fromB).number);
+    if (startA <= endA) delta -= countLines(before, startA, endA, match);
+    if (startB <= endB) delta += countLines(after, startB, endB, match);
+    lastA = endA;
+    lastB = endB;
+  });
+  return delta;
 }

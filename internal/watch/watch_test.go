@@ -35,7 +35,7 @@ func repo(t *testing.T) string {
 func start(t *testing.T, dir string) (*Watcher, chan ev) {
 	t.Helper()
 	ch := make(chan ev, 64)
-	w, err := New(func(p string, g bool) { ch <- ev{p, g} })
+	w, err := New(func(p string, refs, index bool, _ []string) { ch <- ev{p, refs || index} })
 	if err != nil {
 		t.Fatal(err)
 	}

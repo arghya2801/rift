@@ -4,7 +4,7 @@
   import { EditorView, keymap, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
   import { history, historyKeymap, indentWithTab } from '@codemirror/commands';
   import * as Go from '../../wailsjs/go/main/App';
-  import { repo } from '../lib/repo.svelte';
+  import { repo, touches } from '../lib/repo.svelte';
   import { cmBase } from '../lib/cm';
   import { sure, toast } from '../lib/menu.svelte';
   import Icon from '../lib/Icon.svelte';
@@ -15,17 +15,16 @@
   let view: EditorView | undefined;
   let draft: FileDraft | undefined;
   let eol = '\n';
-  const serialize = (v: EditorView) => v.state.doc.sliceString(0, v.state.doc.length, eol);
   let dirty = $state(false);
   let error = $state('');
 
   async function save() {
     const current = draft;
-    if (!current || (!current.pending && current.saved === current.text)) return true;
+    if (!current || (!current.pending && !current.dirty)) return true;
     try {
       await current.save();
-      if (draft === current) { dirty = current.text !== current.saved; error = ''; }
-      repo(current.dir).schedule();
+      if (draft === current) { dirty = current.dirty; error = ''; }
+      repo(current.dir).schedule(false, false, [current.path]);
     } catch (e) {
       if (draft === current) error = String(e);
       toast(String(e));
@@ -45,6 +44,7 @@
       current.text = disk;
       eol = disk.includes('\r\n') ? '\r\n' : '\n';
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: disk } });
+      current.rememberSavedDoc(view.state.doc);
       dirty = false;
       error = '';
     } catch (e) {
@@ -55,17 +55,18 @@
   let reloadId = 0;
   async function reload() {
     const current = draft;
-    if (!view || !current || current.text !== current.saved || current.pending) return;
+    if (!view || !current || current.dirty || current.pending) return;
     const previous = current.saved;
     const id = ++reloadId;
     try {
       const text = await Go.ReadFile(dir, rel);
-      if (!view || current !== draft || id !== reloadId || current.text !== previous || current.saved !== previous) return;
+      if (!view || current !== draft || id !== reloadId || current.dirty || current.saved !== previous) return;
       error = '';
       if (text === previous) return;
       eol = text.includes('\r\n') ? '\r\n' : '\n';
       current.saved = current.text = text;
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+      current.rememberSavedDoc(view.state.doc);
       dirty = false;
     } catch (e) {
       if (id === reloadId && current === draft) error = String(e);
@@ -96,11 +97,12 @@
             ...base,
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return;
-              current.text = serialize(u.view);
-              dirty = current.text !== current.saved;
+              current.edit(u.state.doc, eol);
+              dirty = current.dirty;
             }),
           ],
         });
+        if (!dirty) current.rememberSavedDoc(view.state.doc);
         const ln = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
         view.dispatch({ selection: { anchor: ln.from }, effects: EditorView.scrollIntoView(ln.from, { y: 'center' }) });
         view.focus();
@@ -119,8 +121,8 @@
   });
 
   $effect(() => {
-    repo(dir).snap;
-    untrack(reload);
+    const path = rel;
+    return repo(dir).onFiles((_refs, _index, paths) => { if (touches(path, paths)) untrack(reload); });
   });
 
   function external() {

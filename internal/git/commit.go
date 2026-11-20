@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -39,7 +38,21 @@ type IndexRepair struct {
 func (r *IndexRepair) Error() string { return r.Message }
 
 func indexEntries(dir string, paths []string) (string, error) {
-	return Run(dir, append([]string{"--literal-pathspecs", "ls-files", "--stage", "-z", "--"}, paths...)...)
+	var entries strings.Builder
+	for len(paths) > 0 {
+		n, bytes := 0, 0
+		for n < len(paths) && bytes < 8000 {
+			bytes += len(paths[n]) + 3
+			n++
+		}
+		out, err := Run(dir, append([]string{"--literal-pathspecs", "ls-files", "--stage", "-z", "--"}, paths[:n]...)...)
+		if err != nil {
+			return "", err
+		}
+		entries.WriteString(out)
+		paths = paths[n:]
+	}
+	return entries.String(), nil
 }
 
 func RepairPartialIndex(dir string, repair IndexRepair) error {
@@ -60,7 +73,7 @@ func RepairPartialIndex(dir string, repair IndexRepair) error {
 	if entries != repair.Index {
 		return errors.New("staging changed: review the selected paths manually")
 	}
-	_, err = Run(dir, append([]string{"--literal-pathspecs", "reset", "-q", repair.Head, "--"}, repair.Paths...)...)
+	_, err = runInput(dir, nil, strings.Join(repair.Paths, "\x00")+"\x00", "--literal-pathspecs", "reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul", repair.Head)
 	return err
 }
 
@@ -93,13 +106,48 @@ func CommitPartial(dir, message string, amend bool, files []PartialFile) error {
 		return err
 	}
 
-	paths := make([]string, 0, len(files))
-	for _, pf := range files {
-		paths = append(paths, pf.Path)
-		switch {
-		case pf.Delete:
-			_, err = RunEnv(dir, env, "update-index", "--force-remove", "--", pf.Path)
-		case pf.Text != nil:
+	var paths []string
+	var input strings.Builder
+	mode := ""
+	flush := func() error {
+		if input.Len() == 0 {
+			return nil
+		}
+		args := []string{"update-index", "--add", "--remove", "-z", "--stdin"}
+		if mode == "delete" {
+			args = []string{"update-index", "--force-remove", "-z", "--stdin"}
+		}
+		if mode == "partial" {
+			args = []string{"update-index", "-z", "--index-info"}
+		}
+		_, err := runInput(dir, env, input.String(), args...)
+		input.Reset()
+		return err
+	}
+	var modes map[string]string
+	for i, pf := range files {
+		if pf.Path == "" || strings.ContainsRune(pf.Path, 0) {
+			return errors.New("invalid index path")
+		}
+		next := "whole"
+		if pf.Delete {
+			next = "delete"
+		} else if pf.Text != nil {
+			next = "partial"
+		}
+		if next != mode {
+			if err := flush(); err != nil {
+				return err
+			}
+			mode = next
+			if mode == "partial" {
+				modes, err = partialModes(dir, env, files[i:])
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if next == "partial" {
 			if pf.ExpectedBase != nil {
 				base, err := blob(dir, "HEAD:"+pf.Path)
 				if err != nil {
@@ -109,19 +157,22 @@ func CommitPartial(dir, message string, amend bool, files []PartialFile) error {
 					return errors.New("base file changed: select partial changes again")
 				}
 			}
-			err = StageContent(dir, tmp, pf.Path, *pf.Text)
-		default:
-			if _, statErr := os.Lstat(filepath.Join(dir, pf.Path)); os.IsNotExist(statErr) {
-				_, err = RunEnv(dir, env, "update-index", "--force-remove", "--", pf.Path)
-			} else if statErr != nil {
-				return statErr
-			} else {
-				_, err = RunEnv(dir, env, "update-index", "--add", "--", pf.Path)
+			sha, err := hashObject(dir, pf.Path, *pf.Text)
+			if err != nil {
+				return err
 			}
+			filemode := modes[pf.Path]
+			if filemode == "" {
+				filemode = fileMode(dir, env, pf.Path)
+			}
+			input.WriteString(filemode + " " + sha + "\t")
 		}
-		if err != nil {
-			return err
-		}
+		paths = append(paths, pf.Path)
+		input.WriteString(pf.Path)
+		input.WriteByte(0)
+	}
+	if err := flush(); err != nil {
+		return err
 	}
 
 	args := []string{"commit", "-q", "-m", message}
@@ -164,6 +215,31 @@ func CommitPartial(dir, message string, amend bool, files []PartialFile) error {
 		return repair
 	}
 	return nil
+}
+
+// Read modes only for this run of partial files. Bound argv for Git on Windows.
+func partialModes(dir string, env []string, files []PartialFile) (map[string]string, error) {
+	modes := make(map[string]string)
+	for len(files) > 0 && files[0].Text != nil && !files[0].Delete {
+		args := []string{"--literal-pathspecs", "ls-files", "--stage", "-z", "--"}
+		size := 0
+		for len(files) > 0 && files[0].Text != nil && !files[0].Delete && size < 8000 {
+			args = append(args, files[0].Path)
+			size += len(files[0].Path) + 3
+			files = files[1:]
+		}
+		out, err := RunEnv(dir, env, args...)
+		if err != nil {
+			return nil, err
+		}
+		for record := range strings.SplitSeq(out, "\x00") {
+			header, path, ok := strings.Cut(record, "\t")
+			if ok && len(header) >= 6 {
+				modes[path] = header[:6]
+			}
+		}
+	}
+	return modes, nil
 }
 
 // HeadSides is HEAD vs the working tree file, both in worktree form.

@@ -1,21 +1,30 @@
 import { applyPalette, cssVariables, parsePalette, type Palette } from './theme';
 
-const files = import.meta.glob<Record<string, unknown>>('../themes/*.json', { eager: true, import: 'default' });
+import defaultTheme from '../themes/intellij-dark.json';
 
-export const themes: Palette[] = Object.entries(files)
-  .flatMap(([path, raw]) => {
-    const p = parsePalette(raw, path.split('/').pop()!.replace(/\.json$/i, ''));
-    return p ? [p] : [];
-  })
-  .sort((a, b) => a.name.localeCompare(b.name));
-
-export const themeNames = themes.map((t) => t.name);
+// Eager named imports keep just the display names in the initial bundle.
+const names = import.meta.glob<string>('../themes/*.json', { eager: true, import: 'name' });
+const loaders = import.meta.glob<string>('../themes/*.json', { query: '?raw', import: 'default' });
+export const themeNames = Object.values(names).sort((a, b) => a.localeCompare(b));
 export const DEFAULT_THEME = 'IntelliJ Dark';
+const fallback = parsePalette(defaultTheme)!;
+const cache = new Map<string, Promise<Palette>>();
 const KEY = 'rift.theme';
 
-export function findTheme(name: string | null | undefined): Palette {
-  const wanted = (name ?? '').trim().toLowerCase();
-  return themes.find((t) => t.name.toLowerCase() === wanted) ?? themes.find((t) => t.name === DEFAULT_THEME) ?? themes[0];
+export async function findTheme(name: string | null | undefined): Promise<Palette> {
+  const wanted = name?.trim().toLowerCase();
+  if (!wanted || wanted === DEFAULT_THEME.toLowerCase()) return fallback;
+  const path = Object.keys(names).find((key) => names[key].toLowerCase() === wanted);
+  if (!path) return fallback;
+  let pending = cache.get(path);
+  if (!pending) {
+    pending = loaders[path]().then((raw) => parsePalette(JSON.parse(raw), names[path]) ?? fallback).catch((err) => {
+      cache.delete(path);
+      throw err;
+    });
+    cache.set(path, pending);
+  }
+  return pending;
 }
 
 export function savedTheme(): string {
@@ -26,8 +35,11 @@ export function savedTheme(): string {
   }
 }
 
-export function applyTheme(name: string): Palette {
-  const p = findTheme(name);
+let generation = 0;
+export async function applyTheme(name: string): Promise<Palette> {
+  const id = ++generation;
+  const p = await findTheme(name);
+  if (id !== generation) return p;
   const root = document.documentElement;
   if (p.name === DEFAULT_THEME) {
     for (const v of Object.keys(cssVariables(p))) root.style.removeProperty(v);

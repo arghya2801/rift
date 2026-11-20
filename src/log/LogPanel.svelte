@@ -13,7 +13,9 @@
 
   const r = $derived(repo(dir));
   let rows = $state.raw<git.Row[]>([]);
-  let limit = $state(2000);
+  let more = $state(false);
+  let laneState: string[] = [];
+  let generation = 0;
   let loading = $state(false);
   let filter = $state('');
   let branch = $state('');
@@ -24,26 +26,29 @@
   let leftW = $state(220);
   let rightW = $state(340);
 
-  let generation = 0;
-  async function load() {
-    const request = ++generation;
+  async function load(append = false) {
+    const id = ++generation;
     loading = true;
     try {
-      const page = await Go.Log(dir, limit);
-      if (request !== generation) return;
-      rows = page;
+      const offset = append ? rows.length : 0;
+      const page = await Go.LogPage(dir, offset, append ? 3000 : 2000, offset ? rows[offset - 1].hash : '', append ? laneState : []);
+      if (id !== generation) return;
+      if (page.restart) { await load(); return; }
+      rows = append ? rows.concat(page.rows) : page.rows;
+      laneState = page.lanes ?? [];
+      more = page.more;
       if (selected) selected = rows.find((x) => x.hash === selected!.hash) ?? null;
     } catch (e) {
-      if (request === generation) toast(String(e));
+      if (id === generation) toast(String(e));
+    } finally {
+      if (id === generation) loading = false;
     }
-    if (request === generation) loading = false;
   }
 
   $effect(() => {
     r.gitRev;
-    limit;
-    const t = setTimeout(load, 150);
-    return () => clearTimeout(t);
+    const t = setTimeout(() => load(), 150);
+    return () => { generation++; clearTimeout(t); };
   });
 
   const act = (p: Promise<unknown>) => r.run(p).catch((e) => toast(String(e)));
@@ -84,15 +89,19 @@
   const plain = $derived(!!q || !!branch);
   const start = $derived(Math.max(0, Math.floor(scrollTop / ROW) - 10));
   const visible = $derived(shown.slice(start, start + Math.ceil(height / ROW) + 20));
-  const date = (t: number) => {
+  const visibleToday = $derived.by(() => { visible; return new Date().toDateString(); });
+  const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+  const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  const remoteNames = $derived(new Set(r.refs.filter((x) => x.kind === 'remote').map((x) => x.name)));
+  const date = (t: number, today: string) => {
     const d = new Date(t * 1000);
-    return d.toDateString() === new Date().toDateString() ? `Today ${d.toLocaleTimeString(undefined, { timeStyle: 'short' })}` : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+    return d.toDateString() === today ? `Today ${timeFormat.format(d)}` : dateFormat.format(d);
   };
 
   function refClass(ref: string) {
     if (ref.startsWith('HEAD')) return 'head';
     if (ref.startsWith('tag: ')) return 'tag';
-    return r.refs.some((x) => x.kind === 'remote' && x.name === ref) ? 'remote' : 'local';
+    return remoteNames.has(ref) ? 'remote' : 'local';
   }
 
   function select(x: git.Row | undefined, scroll = false) {
@@ -186,8 +195,8 @@
         </select>
       </label>
       <span class="grow"></span>
-      <span class="dim small">{shown.length} commits{plain && rows.length >= limit ? ' in loaded history' : ''}</span>
-      <button class="icon" title="Refresh" onclick={load} disabled={loading}><Icon name="refresh" /></button>
+      <span class="dim small">{shown.length} commits{plain && more ? ' in loaded history' : ''}</span>
+      <button class="icon" title="Refresh" onclick={() => load()} disabled={loading}><Icon name="refresh" /></button>
     </div>
     <div class="thead">
       <span class="c-subject" style="padding-left:{plain ? 8 : lanes * LANE + 12}px">Subject</span>
@@ -195,7 +204,7 @@
       <span class="c-date">Date</span>
     </div>
     <div class="list" tabindex="0" role="grid" bind:this={list} bind:clientHeight={height} onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)} onkeydown={keys}>
-      <div style="height:{(shown.length + (rows.length >= limit ? 1 : 0)) * ROW}px; position:relative">
+      <div style="height:{(shown.length + (more ? 1 : 0)) * ROW}px; position:relative">
         {#each visible as x, i (x.hash)}
           <div
             class="row"
@@ -215,11 +224,11 @@
               <span class="text">{x.subject}</span>
             </span>
             <span class="c-author">{x.author}</span>
-            <span class="c-date">{date(x.time)}</span>
+            <span class="c-date">{date(x.time, visibleToday)}</span>
           </div>
         {/each}
-        {#if rows.length >= limit}
-          <button class="more" style="top:{shown.length * ROW}px" onclick={() => (limit += 3000)} disabled={loading}>{loading ? 'Loading…' : `Load more commits (showing ${rows.length})`}</button>
+        {#if more}
+          <button class="more" style="top:{shown.length * ROW}px" onclick={() => load(true)} disabled={loading}>{loading ? 'Loading…' : `Load more commits (showing ${rows.length})`}</button>
         {/if}
       </div>
     </div>
