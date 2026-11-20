@@ -54,10 +54,10 @@ async function makeRepos() {
 
 const git = (dir, ...args) => execFileSync('git', args, { cwd: dir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
 
-function portFree(port) {
+function portFree(port, host = '127.0.0.1') {
   return new Promise((r) => {
-    const s = createServer().once('error', () => r(false)).once('listening', () => s.close(() => r(true)));
-    s.listen(port, '127.0.0.1');
+    const s = createServer().once('error', (err) => r(err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT')).once('listening', () => s.close(() => r(true)));
+    s.listen(port, host);
   });
 }
 
@@ -78,13 +78,13 @@ function cleanup() {
 process.on('SIGINT', () => { cleanup(); process.exit(130); });
 
 async function startApp() {
-  if (!(await portFree(VITE_PORT))) throw new Error(`port ${VITE_PORT} (vite) is busy; stop the other dev server first`);
+  if (!(await portFree(VITE_PORT)) || !(await portFree(VITE_PORT, '::1'))) throw new Error(`port ${VITE_PORT} (vite) is busy; stop the other dev server first`);
   if (!(await portFree(APP_PORT))) throw new Error(`port ${APP_PORT} is busy`);
   const env = { ...process.env };
   if (win) env.APPDATA = config;
   else if (process.platform === 'darwin') env.HOME = config;
   else env.XDG_CONFIG_HOME = config;
-  const p = spawn('wails', ['dev', '-s', '-devserver', `localhost:${APP_PORT}`, '-appargs', slash(repo)], { cwd: root, env, windowsHide: true, detached: !win });
+  const p = spawn('wails', ['dev', '-s', '-viteservertimeout', '60', '-devserver', `localhost:${APP_PORT}`, '-appargs', slash(repo)], { cwd: root, env, windowsHide: true, detached: !win });
   owned.push(p);
   let log = '';
   p.stdout.on('data', (d) => (log += d));
@@ -421,6 +421,7 @@ if (only && !scenarios[only]) {
   process.exit(2);
 }
 let failed = 0;
+let passed = 0;
 const t0 = Date.now();
 try {
   console.log('starting wails dev (isolated config) …');
@@ -438,6 +439,7 @@ try {
       const toasts = await js(`[...document.querySelectorAll('.toast.error')].map((e) => e.textContent.trim())`);
       if (toasts?.length) problems.push('error toast: ' + toasts.join(' | '));
       if (problems.length) throw new Error(problems.join('\n      '));
+      passed++;
       console.log(`PASS ${name} (${Date.now() - s0} ms)`);
     } catch (e) {
       failed++;
@@ -448,8 +450,9 @@ try {
 } catch (e) {
   failed++;
   console.log('SETUP FAIL: ' + (e.message ?? e));
+  console.log('Scenarios not run: ' + names.join(', '));
 } finally {
-  console.log(`${names.length - failed}/${names.length} passed in ${Math.round((Date.now() - t0) / 1000)} s${keep ? ` (kept running; scratch at ${work})` : ''}`);
+  console.log(`${passed}/${names.length} passed in ${Math.round((Date.now() - t0) / 1000)} s${keep ? ` (kept running; scratch at ${work})` : ''}`);
   ws?.close();
   cleanup();
 }

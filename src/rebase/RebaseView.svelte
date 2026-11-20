@@ -19,7 +19,7 @@
   });
 
   function move(from: number, to: number) {
-    if (to < 0 || to >= items.length || from === to) return;
+    if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return;
     const [it] = items.splice(from, 1);
     items.splice(to, 0, it);
     sel = to;
@@ -42,7 +42,7 @@
   }
 
   const invalid = $derived(
-    items.length === 0 ? 'Nothing to rebase' : ['squash', 'fixup'].includes(items[0].action) ? 'The first commit cannot be squash or fixup' : '',
+    items.length === 0 ? 'Nothing to rebase' : ['squash', 'fixup'].includes(items.find((item) => item.action !== 'drop')?.action ?? '') ? 'The first commit cannot be squash or fixup' : '',
   );
 
   async function start() {

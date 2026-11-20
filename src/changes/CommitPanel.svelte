@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import * as Go from '../../wailsjs/go/main/App';
   import { git } from '../../wailsjs/go/models';
   import Icon from '../lib/Icon.svelte';
   import { repo } from '../lib/repo.svelte';
   import { openTab, diffTab, fileTab, mergeTab } from '../lib/tabs.svelte';
   import { openMenu, ask, sure, toast, type MenuItem } from '../lib/menu.svelte';
-  import { partials } from './partial.svelte';
+  import { partials, commitDraft } from './partial.svelte';
 
   let { dir }: { dir: string } = $props();
 
@@ -21,12 +22,10 @@
   const r = $derived(repo(dir));
   let mode = $state<'staging' | 'changelists'>('staging');
   let lists = $state<Record<string, string[]>>({});
-  let pick = $state<Record<string, boolean>>({});
+  const draft = untrack(() => commitDraft(dir));
   let collapsed = $state<Record<string, boolean>>({});
   let byDir = $state(false);
   let selected = $state<string | null>(null);
-  let message = $state('');
-  let amend = $state(false);
   let busy = $state(false);
   let commitH = $state(170);
   let treeEl: HTMLDivElement;
@@ -103,7 +102,7 @@
 
   // Prune changelist entries and partial texts for files that are no longer changed.
   $effect(() => {
-    if (!r.snap) return;
+    if (!r.snap || r.error) return;
     const live = new Set(r.files.map((f) => f.path));
     let dirty = false;
     const next: Record<string, string[]> = {};
@@ -123,7 +122,7 @@
 
   const on = (item: Item, g: Group) => {
     if (mode === 'staging') return g.kind === 'staged';
-    return pick[item.f.path] ?? g.kind !== 'new';
+    return draft.pick[item.f.path] ?? g.kind !== 'new';
   };
   const commitItems = $derived(mode === 'staging' ? (groups.find((g) => g.kind === 'staged')?.items ?? []) : groups.flatMap((g) => g.items.filter((i) => on(i, g))));
 
@@ -136,13 +135,16 @@
   }
 
   function setOn(items: Item[], g: Group, value: boolean) {
+    if (r.error) return;
     if (mode === 'staging') {
-      const paths = items.map((i) => i.f.path);
+      const paths = [...new Set(items.flatMap(({ f }) =>
+        !value && ch(f.index) === 'R' && f.origPath ? [f.path, f.origPath] : [f.path],
+      ))];
       if (!paths.length) return;
       act(value ? Go.Stage(dir, paths) : Go.Unstage(dir, paths));
       return;
     }
-    for (const i of items) pick[i.f.path] = value;
+    for (const i of items) draft.pick[i.f.path] = value;
   }
 
   const allOn = (items: Item[], g: Group) => items.length > 0 && items.every((i) => on(i, g));
@@ -150,7 +152,7 @@
 
   function show(item: Item) {
     if (item.f.conflict) openTab(dir, mergeTab(item.f.path));
-    else openTab(dir, diffTab(item.f.path, item.source), true);
+    else openTab(dir, diffTab(item.f.path, item.source, item.f.origPath), true);
   }
 
   function select(row: Row) {
@@ -162,10 +164,10 @@
     return row.kind === 'file' ? [row.item] : row.kind === 'folder' ? row.items : row.group.items;
   }
 
-  async function rollback(items: Item[]) {
-    if (!items.length) return;
+  async function rollback(items: Item[], folder?: string) {
+    if (r.error || !items.length) return;
     const paths = [...new Set(items.map((i) => i.f.path))];
-    const what = paths.length === 1 ? paths[0] : `${paths.length} files`;
+    const what = folder || (paths.length === 1 ? paths[0] : `${paths.length} files`);
     if (!(await sure(`Rollback ${what}?`, 'Local changes are discarded. Unversioned files are deleted.', 'Rollback'))) return;
     act(Go.Discard(dir, paths));
   }
@@ -207,9 +209,10 @@
     openMenu(e, items);
   }
 
-  function groupMenu(e: MouseEvent, g: Group) {
-    const items: MenuItem[] = [{ label: 'Rollback All…', danger: true, run: () => rollback(g.items) }];
-    if (mode === 'changelists') {
+  function groupMenu(e: MouseEvent, row: Extract<Row, { kind: 'group' | 'folder' }>) {
+    const g = row.group;
+    const items: MenuItem[] = [{ label: 'Rollback All…', danger: true, run: () => rollback(rowItems(row), row.kind === 'folder' ? row.name : undefined) }];
+    if (mode === 'changelists' && row.kind === 'group') {
       items.push(null, { label: 'New Changelist…', run: () => newList() });
       if (g.kind === 'list' && g.name !== DEFAULT) {
         items.push(
@@ -267,8 +270,8 @@
   }
 
   async function toggleAmend() {
-    amend = !amend;
-    if (amend && !message.trim()) message = (await Go.LastMessage(dir)).trim();
+    draft.amend = !draft.amend;
+    if (draft.amend && !draft.message.trim()) draft.message = (await Go.LastMessage(dir)).trim();
   }
 
   async function setMode(m: string) {
@@ -280,30 +283,30 @@
     }
   }
 
-  const canCommit = $derived(!busy && !!message.trim() && (commitItems.length > 0 || amend));
+  const canCommit = $derived(!busy && !draft.repair && !r.error && (mode === 'staging' || !r.files.some((f) => f.conflict)) && !!draft.message.trim() && (commitItems.length > 0 || draft.amend));
 
   async function commit(push = false) {
     if (!canCommit) return;
     busy = true;
     try {
       if (mode === 'staging') {
-        await r.run(Go.Commit(dir, message, amend));
+        await r.run(Go.Commit(dir, draft.message, draft.amend));
       } else {
         const part = partials[dir] ?? {};
         const out: git.PartialFile[] = [];
         for (const { f } of commitItems) {
-          out.push(git.PartialFile.createFrom({ path: f.path, text: part[f.path], delete: false }));
-          if (f.origPath) out.push(git.PartialFile.createFrom({ path: f.origPath, delete: true }));
+          out.push(git.PartialFile.createFrom({ path: f.path, text: part[f.path]?.text, expectedBase: part[f.path]?.base, delete: false }));
+          if (f.origPath && (ch(f.index) === 'R' || ch(f.work) === 'R')) out.push(git.PartialFile.createFrom({ path: f.origPath, delete: true }));
         }
-        await r.run(Go.CommitPartial(dir, message, amend, out));
+        draft.repair = (await r.run(Go.CommitPartial(dir, draft.message, draft.amend, out))) ?? undefined;
         for (const { f } of commitItems) {
           delete part[f.path];
-          delete pick[f.path];
+          delete draft.pick[f.path];
         }
       }
-      message = '';
-      amend = false;
-      if (push) {
+      draft.message = '';
+      draft.amend = false;
+      if (push && !draft.repair) {
         const out = await r.run(Go.Push(dir, false));
         toast(out.trim().split('\n').pop() || 'Pushed', 'info');
       }
@@ -312,6 +315,16 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function repairIndex() {
+    if (!draft.repair || busy) return;
+    busy = true;
+    try {
+      await r.run(Go.RepairPartialIndex(dir, draft.repair));
+      delete draft.repair;
+    } catch (e) { toast(String(e)); }
+    finally { busy = false; }
   }
 
   function drag(e: MouseEvent) {
@@ -342,6 +355,13 @@
     </select>
   </header>
 
+  {#if draft.repair}
+    <div role="alert">{draft.repair.message}
+      <button disabled={busy} onclick={repairIndex}>Retry index update</button>
+      <button disabled={busy} onclick={() => delete draft.repair}>I reviewed staging</button>
+    </div>
+  {/if}
+  {#if r.error}<div class="error" role="alert">{r.error}</div>{/if}
   <div class="tree" role="tree" tabindex="0" bind:this={treeEl} onkeydown={onKey}>
     {#each rows as row (row.key)}
       {@const items = rowItems(row)}
@@ -355,7 +375,7 @@
         tabindex="-1"
         onclick={() => select(row)}
         ondblclick={() => row.kind === 'file' ? openTab(dir, fileTab(row.item.f.path)) : (collapsed[row.key] = !collapsed[row.key])}
-        oncontextmenu={(e) => { selected = row.key; row.kind === 'file' ? fileMenu(e, row.item, row.group) : groupMenu(e, row.group); }}
+        oncontextmenu={(e) => { selected = row.key; row.kind === 'file' ? fileMenu(e, row.item, row.group) : groupMenu(e, row); }}
         onkeydown={() => {}}
       >
         {#if row.kind !== 'file'}
@@ -389,7 +409,7 @@
         {/if}
       </div>
     {:else}
-      <div class="empty dim">No changes</div>
+      {#if !r.error}<div class="empty dim">No changes</div>{/if}
     {/each}
   </div>
 
@@ -397,12 +417,12 @@
 
   <div class="commit" style="height:{commitH}px">
     <textarea
-      bind:value={message}
+      bind:value={draft.message}
       placeholder="Commit message"
       onkeydown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commit(); } }}
     ></textarea>
     <div class="actions">
-      <label class="amend"><input type="checkbox" checked={amend} onchange={toggleAmend} /> Amend</label>
+      <label class="amend"><input type="checkbox" checked={draft.amend} onchange={toggleAmend} /> Amend</label>
       <span class="grow"></span>
       <span class="dim small">{commitItems.length} {commitItems.length === 1 ? 'file' : 'files'}</span>
       <button class="primary" disabled={!canCommit} onclick={() => commit()} title="Ctrl+Enter">Commit</button>

@@ -48,7 +48,7 @@
         </div>
         {#if r.error}<div class="err">{r.error}</div>{/if}
         {#each wts as w (w.path)}
-          <button class="wt" class:on={app.current?.path === w.path} onclick={() => pick(w)} oncontextmenu={(e) => openMenu(e, worktreeMenu(r, w))} title={w.path}>
+          <button class="wt" disabled={w.bare} class:on={app.current?.path === w.path} onclick={() => pick(w)} oncontextmenu={(e) => openMenu(e, worktreeMenu(r, w))} title={w.path}>
             <Icon name="branch" size={14} />
             <span class="grow">{label(w)}</span>
             {#if !w.main}<span class="dim small">{leaf(w.path)}</span>{/if}

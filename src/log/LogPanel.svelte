@@ -24,15 +24,19 @@
   let leftW = $state(220);
   let rightW = $state(340);
 
+  let generation = 0;
   async function load() {
+    const request = ++generation;
     loading = true;
     try {
-      rows = await Go.Log(dir, limit);
+      const page = await Go.Log(dir, limit);
+      if (request !== generation) return;
+      rows = page;
       if (selected) selected = rows.find((x) => x.hash === selected!.hash) ?? null;
     } catch (e) {
-      toast(String(e));
+      if (request === generation) toast(String(e));
     }
-    loading = false;
+    if (request === generation) loading = false;
   }
 
   $effect(() => {
@@ -182,7 +186,7 @@
         </select>
       </label>
       <span class="grow"></span>
-      <span class="dim small">{shown.length} commits</span>
+      <span class="dim small">{shown.length} commits{plain && rows.length >= limit ? ' in loaded history' : ''}</span>
       <button class="icon" title="Refresh" onclick={load} disabled={loading}><Icon name="refresh" /></button>
     </div>
     <div class="thead">
@@ -214,7 +218,7 @@
             <span class="c-date">{date(x.time)}</span>
           </div>
         {/each}
-        {#if rows.length >= limit && !plain}
+        {#if rows.length >= limit}
           <button class="more" style="top:{shown.length * ROW}px" onclick={() => (limit += 3000)} disabled={loading}>{loading ? 'Loading…' : `Load more commits (showing ${rows.length})`}</button>
         {/if}
       </div>

@@ -38,6 +38,11 @@ func Log(dir string, limit int, extra ...string) ([]Row, error) {
 		args = append(args, "--branches", "--remotes", "--tags", "HEAD")
 	}
 	out, err := Run(dir, args...)
+	if err != nil && len(extra) == 0 {
+		if _, headErr := Run(dir, "rev-parse", "--verify", "--quiet", "HEAD"); headErr != nil {
+			out, err = Run(dir, args[:len(args)-1]...)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +83,7 @@ func Graph(commits []Commit) []Row {
 	}
 	for n, c := range commits {
 		col := -1
-		var lines []Line
+		lines := []Line{}
 		for i, h := range lanes {
 			if h == "" {
 				continue
@@ -151,12 +156,11 @@ func CommitFiles(dir, hash string) ([]ChangedFile, error) {
 	return files, nil
 }
 
-func CommitSides(dir, hash, path, oldPath string) Sides {
+func CommitSides(dir, hash, path, oldPath string) (Sides, error) {
 	if oldPath == "" {
 		oldPath = path
 	}
-	b := blobs(dir, hash+"^:"+oldPath, hash+":"+path)
-	return sides(b[0], b[1])
+	return blobSides(dir, hash+"^:"+oldPath, hash+":"+path)
 }
 
 func CommitMessage(dir, hash string) string {

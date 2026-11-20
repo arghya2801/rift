@@ -57,7 +57,7 @@ func (a *App) Initial() string {
 // Watch switches the live-refresh watcher to dir ("" stops it).
 func (a *App) Watch(dir string) {
 	if a.watcher != nil {
-		go a.watcher.Set(dir)
+		a.watcher.Switch(dir)
 	}
 }
 
@@ -152,7 +152,12 @@ func (a *App) OpenInATC(dir string) error {
 	if err != nil {
 		return errors.New("atc not found on PATH")
 	}
-	return exec.Command(exe, "--open", dir).Start()
+	cmd := exec.Command(exe, "--open", dir)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
 }
 
 func (a *App) PickFolder() (string, error) {
@@ -163,8 +168,8 @@ func (a *App) Status(path string) (git.Status, error) {
 	return git.GetStatus(path)
 }
 
-func (a *App) FileSides(dir, path string, staged bool) (git.Sides, error) {
-	return git.FileSides(dir, path, staged)
+func (a *App) FileSides(dir, path string, staged bool, oldPath string) (git.Sides, error) {
+	return git.FileSides(dir, path, staged, oldPath)
 }
 
 func (a *App) Stage(dir string, paths []string) error   { return git.Stage(dir, paths) }
@@ -183,7 +188,7 @@ func (a *App) Log(dir string, limit int) ([]git.Row, error) { return git.Log(dir
 func (a *App) CommitFiles(dir, hash string) ([]git.ChangedFile, error) {
 	return git.CommitFiles(dir, hash)
 }
-func (a *App) CommitSides(dir, hash, path, oldPath string) git.Sides {
+func (a *App) CommitSides(dir, hash, path, oldPath string) (git.Sides, error) {
 	return git.CommitSides(dir, hash, path, oldPath)
 }
 func (a *App) CommitMessage(dir, hash string) string { return git.CommitMessage(dir, hash) }

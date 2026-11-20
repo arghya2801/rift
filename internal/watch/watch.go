@@ -39,12 +39,24 @@ func New(onChange func(path string, git bool)) (*Watcher, error) {
 // Set switches to dir. Ignored dirs are skipped.
 // ponytail: one fsnotify watch per dir; huge trees can hit OS limits (inotify), focus refresh still works.
 func (wt *Watcher) Set(dir string) {
+	wt.install(dir, wt.selectPath(dir))
+}
+
+func (wt *Watcher) Switch(dir string) {
+	gen := wt.selectPath(dir)
+	go wt.install(dir, gen)
+}
+
+func (wt *Watcher) selectPath(dir string) int {
 	wt.mu.Lock()
 	wt.gen++
-	gen := wt.gen
+	defer wt.mu.Unlock()
 	wt.path = dir
-	wt.mu.Unlock()
+	wt.gitHit = false
+	return wt.gen
+}
 
+func (wt *Watcher) install(dir string, gen int) {
 	// Slow work (git spawns, tree walk) happens unlocked; a newer Set makes this one bail out.
 	var dirs, gitDirs []string
 	var skip map[string]bool
@@ -110,9 +122,18 @@ func (wt *Watcher) loop() {
 				return
 			}
 			wt.mu.Lock()
-			ignored := wt.skip[filepath.Clean(ev.Name)]
+			name := filepath.Clean(ev.Name)
+			gen := wt.gen
+			inGit := false
+			for _, g := range wt.gitDirs {
+				if name == g || strings.HasPrefix(name, g+string(filepath.Separator)) {
+					inGit = true
+					break
+				}
+			}
+			ignored := wt.skip[name] || wt.path == "" || (!inGit && name != wt.path && !strings.HasPrefix(name, wt.path+string(filepath.Separator)))
 			wt.mu.Unlock()
-			if ignored || strings.HasSuffix(ev.Name, ".lock") {
+			if ignored || (inGit && strings.HasSuffix(name, ".lock")) {
 				continue
 			}
 			// Windows reports a dir as written when a child changes, sometimes late; the child's own event is enough.
@@ -124,23 +145,37 @@ func (wt *Watcher) loop() {
 			if ev.Has(fsnotify.Create) {
 				wt.mu.Lock()
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-					_ = wt.w.AddWith(ev.Name, fsnotify.WithBufferSize(4096))
+					if gen == wt.gen {
+						_ = filepath.WalkDir(name, func(p string, d fs.DirEntry, err error) error {
+							if err != nil || !d.IsDir() {
+								return nil
+							}
+							if wt.skip[p] || d.Name() == ".git" {
+								return filepath.SkipDir
+							}
+							_ = wt.w.AddWith(p, fsnotify.WithBufferSize(4096))
+							return nil
+						})
+					}
 				}
 				wt.mu.Unlock()
 			}
 			wt.mu.Lock()
-			name := filepath.Clean(ev.Name)
-			for _, g := range wt.gitDirs {
-				if name == g || strings.HasPrefix(name, g+string(filepath.Separator)) {
-					wt.gitHit = true
-				}
+			if gen != wt.gen {
+				wt.mu.Unlock()
+				continue
 			}
+			wt.gitHit = wt.gitHit || inGit
 			wt.mu.Unlock()
 			if timer != nil {
 				timer.Stop()
 			}
 			timer = time.AfterFunc(250*time.Millisecond, func() {
 				wt.mu.Lock()
+				if gen != wt.gen {
+					wt.mu.Unlock()
+					return
+				}
 				p, g := wt.path, wt.gitHit
 				wt.gitHit = false
 				wt.mu.Unlock()
@@ -151,6 +186,13 @@ func (wt *Watcher) loop() {
 		case _, ok := <-wt.w.Errors:
 			if !ok {
 				return
+			}
+			wt.mu.Lock()
+			dir, gen := wt.path, wt.gen
+			wt.mu.Unlock()
+			if dir != "" {
+				wt.install(dir, gen)
+				wt.onChange(dir, true)
 			}
 		}
 	}

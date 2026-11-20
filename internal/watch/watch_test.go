@@ -162,3 +162,12 @@ func TestSwitchLeavesOnlyNewWatched(t *testing.T) {
 	case <-time.After(800 * time.Millisecond):
 	}
 }
+
+func TestProjectLockfileRefreshesStatus(t *testing.T) {
+	dir := repo(t)
+	_, ch := start(t, dir)
+	touch(t, filepath.Join(dir, "yarn.lock"))
+	if e, ok := next(ch); !ok || e.git || e.path != dir {
+		t.Fatalf("lockfile refresh: %+v %v", e, ok)
+	}
+}

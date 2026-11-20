@@ -1,23 +1,26 @@
 export type Segment = { type: 'text'; text: string } | { type: 'conflict'; ours: string; base: string; theirs: string };
 
-export function parse(src: string): Segment[] {
+export function parse(src: string, size = 7): Segment[] {
   const out: Segment[] = [];
   const lines = src.split(/(?<=\n)/);
   let text = '';
+  let raw = '';
   let cur: { ours: string; base: string; theirs: string } | null = null;
   let part: 'ours' | 'base' | 'theirs' = 'ours';
   for (const line of lines) {
     const bare = line.replace(/\r?\n$/, '');
-    if (!cur && bare.startsWith('<<<<<<<')) {
+    if (cur) raw += line;
+    if (!cur && bare === '<'.repeat(size) + ' ours') {
+      raw = line;
       if (text) out.push({ type: 'text', text });
       text = '';
       cur = { ours: '', base: '', theirs: '' };
       part = 'ours';
-    } else if (cur && part === 'ours' && bare.startsWith('|||||||')) {
+    } else if (cur && part === 'ours' && bare === '|'.repeat(size) + ' base') {
       part = 'base';
-    } else if (cur && part !== 'theirs' && bare === '=======') {
+    } else if (cur && part !== 'theirs' && bare === '='.repeat(size)) {
       part = 'theirs';
-    } else if (cur && part === 'theirs' && bare.startsWith('>>>>>>>')) {
+    } else if (cur && part === 'theirs' && bare === '>'.repeat(size) + ' theirs') {
       out.push({ type: 'conflict', ...cur });
       cur = null;
     } else if (cur) {
@@ -26,15 +29,21 @@ export function parse(src: string): Segment[] {
       text += line;
     }
   }
-  if (cur) text += render([{ type: 'conflict', ...cur }]);
+  if (cur) text += raw;
   if (text) out.push({ type: 'text', text });
   return out;
 }
 
-export function render(segments: Segment[]): string {
+export function render(segments: Segment[], size = 7): string {
   return segments
-    .map((s) => (s.type === 'text' ? s.text : `<<<<<<< ours\n${s.ours}||||||| base\n${s.base}=======\n${s.theirs}>>>>>>> theirs\n`))
+    .map((s) => (s.type === 'text' ? s.text : `${'<'.repeat(size)} ours\n${s.ours}${'|'.repeat(size)} base\n${s.base}${'='.repeat(size)}\n${s.theirs}${'>'.repeat(size)} theirs\n`))
     .join('');
 }
 
-export const hasMarkers = (text: string) => /^(<<<<<<<|>>>>>>>)/m.test(text);
+export function markerStarts(text: string, size = 7): number[] {
+  return Array.from(text.matchAll(new RegExp('^<{' + size + '} ours\\r?$', 'gm')), (match) => match.index!);
+}
+
+export function hasMarkers(text: string, size = 7): boolean {
+  return new RegExp('^(?:<{' + size + '} ours|[|]{' + size + '} base|={' + size + '}|>{' + size + '} theirs)\\r?$', 'm').test(text);
+}

@@ -91,7 +91,7 @@
       <input placeholder="Search branches" bind:value={filter} autofocus />
     </div>
     <div class="actions">
-      <button onclick={() => newBranch(current || 'HEAD')}><Icon name="plus" size={14} /> New branch…</button>
+      <button onclick={() => newBranch('HEAD')}><Icon name="plus" size={14} /> New branch…</button>
       <button onclick={() => ((open = false), remote(dir, 'Fetching', () => Go.Fetch(dir)))}><Icon name="fetch" size={14} /> Fetch</button>
     </div>
     <div class="list">

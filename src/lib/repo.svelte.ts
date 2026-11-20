@@ -50,8 +50,12 @@ export class Repo {
         s.refs = this.snap.refs;
         s.stashes = this.snap.stashes;
       }
-      this.snap = s;
       this.error = s.error ?? '';
+      if (this.error) this.#wantFull = true;
+      else this.snap = s;
+    } catch (e) {
+      this.error = String(e);
+      this.#wantFull = true;
     } finally {
       this.#inflight = false;
       if (this.#again) {
@@ -111,5 +115,5 @@ let lastFocus = 0;
 window.addEventListener('focus', () => {
   if (Date.now() - lastFocus < 3000) return;
   lastFocus = Date.now();
-  active?.schedule(false);
+  active?.schedule(true);
 });

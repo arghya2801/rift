@@ -14,6 +14,7 @@ type FileStatus struct {
 }
 
 type Status struct {
+	unborn   bool
 	Branch   string       `json:"branch"`
 	Upstream string       `json:"upstream"`
 	Ahead    int          `json:"ahead"`
@@ -44,6 +45,8 @@ func parseStatus(out string) Status {
 				continue
 			}
 			switch parts[1] {
+			case "branch.oid":
+				s.unborn = parts[2] == "(initial)"
 			case "branch.head":
 				s.Branch = parts[2]
 			case "branch.upstream":

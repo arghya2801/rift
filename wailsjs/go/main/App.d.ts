@@ -3,7 +3,7 @@
 import {git} from '../models';
 import {main} from '../models';
 
-export function AcceptSide(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function AcceptSide(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function AddRepo(arg1:string):Promise<string>;
 
@@ -25,7 +25,7 @@ export function CommitFiles(arg1:string,arg2:string):Promise<Array<git.ChangedFi
 
 export function CommitMessage(arg1:string,arg2:string):Promise<string>;
 
-export function CommitPartial(arg1:string,arg2:string,arg3:boolean,arg4:Array<git.PartialFile>):Promise<void>;
+export function CommitPartial(arg1:string,arg2:string,arg3:boolean,arg4:Array<git.PartialFile>):Promise<git.IndexRepair>;
 
 export function CommitSides(arg1:string,arg2:string,arg3:string,arg4:string):Promise<git.Sides>;
 
@@ -41,7 +41,7 @@ export function Discard(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function Fetch(arg1:string):Promise<string>;
 
-export function FileSides(arg1:string,arg2:string,arg3:boolean):Promise<git.Sides>;
+export function FileSides(arg1:string,arg2:string,arg3:boolean,arg4:string):Promise<git.Sides>;
 
 export function GetMode():Promise<string>;
 
@@ -93,15 +93,19 @@ export function RemoveWorktree(arg1:string,arg2:string,arg3:boolean):Promise<voi
 
 export function RenameBranch(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function RepairPartialIndex(arg1:string,arg2:git.IndexRepair):Promise<void>;
+
 export function Repos():Promise<Array<main.Repo>>;
 
 export function Reset(arg1:string,arg2:string,arg3:string):Promise<void>;
 
-export function ResolveFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function ResolveFile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function Revert(arg1:string,arg2:string):Promise<void>;
 
 export function RunRebase(arg1:string,arg2:string,arg3:Array<git.TodoItem>):Promise<void>;
+
+export function SaveFile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SetChangelists(arg1:string,arg2:Record<string, Array<string>>):Promise<void>;
 

@@ -58,6 +58,10 @@ func AddWorktree(mainDir, branch, base string, newBranch bool) (string, error) {
 		}
 	}
 	_, err := Run(mainDir, args...)
+	if err == nil {
+		gitDirs.Delete(path)
+		commonDirs.Delete(path)
+	}
 	return path, err
 }
 
@@ -67,6 +71,10 @@ func RemoveWorktree(mainDir, path string, force bool) error {
 		args = append(args, "--force")
 	}
 	_, err := Run(mainDir, args...)
+	if err == nil {
+		gitDirs.Delete(path)
+		commonDirs.Delete(path)
+	}
 	return err
 }
 

@@ -57,3 +57,26 @@ func TestGetIsDeepCopy(t *testing.T) {
 		t.Fatalf("store changed through Get: %+v", again)
 	}
 }
+
+func TestIndependentInstancesAndFailedUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings")
+	a, b := Open(path), Open(path)
+	if err := a.Update(func(s *State) { s.Repos = append(s.Repos, "first") }); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Update(func(s *State) { s.Repos = append(s.Repos, "second") }); err != nil {
+		t.Fatal(err)
+	}
+	if len(Open(path).Get().Repos) != 2 {
+		t.Fatal("lost another instance's settings")
+	}
+	if err := os.WriteFile(path, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Update(func(s *State) { s.Mode = "changed" }); err == nil {
+		t.Fatal("overwrote corrupt settings")
+	}
+	if a.Get().Mode != "staging" {
+		t.Fatal("failed update changed active settings")
+	}
+}

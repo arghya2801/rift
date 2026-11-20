@@ -12,6 +12,8 @@
 
   $effect(() => {
     const h = row.hash;
+    files = [];
+    message = '';
     let dead = false;
     Promise.all([Go.CommitMessage(dir, h), Go.CommitFiles(dir, h)]).then(
       ([m, f]) => {
